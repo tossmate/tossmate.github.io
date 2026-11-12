@@ -2344,7 +2344,10 @@
       const el = elementId ? document.getElementById(elementId) : null;
       if (el) el.classList.add('tts-active');
 
+      let isFinished = false;
       const finishPlayback = () => {
+        if (isFinished) return;
+        isFinished = true;
         if (el) el.classList.remove('tts-active');
         if (myRunId === currentTtsRunId && onEndCallback) {
           onEndCallback();
@@ -2369,40 +2372,72 @@
         }
       }
 
-      // 3순위: Google Translate US English 실제 여성 성우 오디오 스트림 재생 (실패 시 4순위 브라우저 내장 영어 원어민 음성으로 즉시 전환)
-      try {
-        const chunks = splitTextIntoChunks(cleanText, 175);
-        let idx = 0;
+      // 3순위: 브라우저 내장 미국 원어민 음성(speechSynthesis) 또는 Google TTS 스트림으로 문장 전체를 끊김 없이 끝까지 낭독
+      const playWithBrowserSpeechSynthesis = () => {
+        if (myRunId !== currentTtsRunId) return;
+        if (!('speechSynthesis' in window)) {
+          // 음성 엔진 미지원 환경에서도 최소 읽기 시간만큼 대기 후 다음 단계 진행
+          const fallbackDelayMs = Math.max(1800, cleanText.split(/\s+/).length * 420);
+          setTimeout(finishPlayback, fallbackDelayMs);
+          return;
+        }
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.lang = 'en-US';
+          utterance.rate = 0.94;
+          utterance.pitch = 1.0;
 
-        const playWithBrowserSpeechSynthesis = () => {
-          if (myRunId !== currentTtsRunId) return;
-          if (!('speechSynthesis' in window)) {
-            finishPlayback();
-            return;
+          const voices = window.speechSynthesis.getVoices();
+          const preferredVoice =
+            voices.find(v => v.lang === 'en-US' && /Google US English|Samantha|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
+            voices.find(v => v.lang.startsWith('en-US')) ||
+            voices.find(v => v.lang.startsWith('en'));
+          if (preferredVoice) {
+            utterance.voice = preferredVoice;
           }
-          try {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(cleanText);
-            utterance.lang = 'en-US';
-            utterance.rate = 0.95;
-            utterance.pitch = 1.0;
 
-            const voices = window.speechSynthesis.getVoices();
-            const preferredVoice =
-              voices.find(v => v.lang === 'en-US' && /Google US English|Samantha|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
-              voices.find(v => v.lang.startsWith('en-US')) ||
-              voices.find(v => v.lang.startsWith('en'));
-            if (preferredVoice) {
-              utterance.voice = preferredVoice;
+          // Chrome 긴 문장 끊김 방지용 keep-alive 타이머 + 실제 발화 시간 기반 안전 타이머
+          const estimatedMs = Math.max(1600, cleanText.split(/\s+/).length * 450);
+          const safetyTimer = setTimeout(() => {
+            if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+              finishPlayback();
             }
+          }, estimatedMs + 1500);
 
-            utterance.onend = finishPlayback;
-            utterance.onerror = finishPlayback;
-            window.speechSynthesis.speak(utterance);
-          } catch (synthErr) {
+          const resumeInterval = setInterval(() => {
+            if (myRunId !== currentTtsRunId || isFinished) {
+              clearInterval(resumeInterval);
+              return;
+            }
+            if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+              window.speechSynthesis.pause();
+              window.speechSynthesis.resume();
+            }
+          }, 5000);
+
+          utterance.onend = () => {
+            clearTimeout(safetyTimer);
+            clearInterval(resumeInterval);
             finishPlayback();
-          }
-        };
+          };
+          utterance.onerror = () => {
+            clearTimeout(safetyTimer);
+            clearInterval(resumeInterval);
+            setTimeout(finishPlayback, Math.min(2500, estimatedMs));
+          };
+
+          window.speechSynthesis.speak(utterance);
+        } catch (synthErr) {
+          const fallbackDelayMs = Math.max(1800, cleanText.split(/\s+/).length * 420);
+          setTimeout(finishPlayback, fallbackDelayMs);
+        }
+      };
+
+      //  짧은 안내 멘트("Begin preparing now." 등)와 긴 지문 모두 안정적으로 순서대로 재생되도록 처리
+      try {
+        const chunks = splitTextIntoChunks(cleanText, 160);
+        let idx = 0;
 
         const playNextChunk = () => {
           if (myRunId !== currentTtsRunId) return;
@@ -2415,14 +2450,31 @@
           const audio = new Audio(streamUrl);
           currentTtsAudio = audio;
           audio.playbackRate = 0.96;
-          audio.onended = () => playNextChunk();
-          audio.onerror = () => playWithBrowserSpeechSynthesis();
-          audio.play().catch(() => playWithBrowserSpeechSynthesis());
+
+          let chunkHandled = false;
+          const handleChunkFail = () => {
+            if (chunkHandled || myRunId !== currentTtsRunId) return;
+            chunkHandled = true;
+            // 스트림이 차단되면 즉시 브라우저 원어민 음성으로 전환하여 현재 문장을 처음부터 끝까지 낭독
+            playWithBrowserSpeechSynthesis();
+          };
+
+          audio.onended = () => {
+            if (chunkHandled || myRunId !== currentTtsRunId) return;
+            chunkHandled = true;
+            playNextChunk();
+          };
+          audio.onerror = handleChunkFail;
+
+          const playPromise = audio.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(handleChunkFail);
+          }
         };
 
         playNextChunk();
       } catch (e) {
-        finishPlayback();
+        playWithBrowserSpeechSynthesis();
       }
     }
 
