@@ -236,20 +236,25 @@
       border-radius: 3px;
     }
     .reading-highlight {
-      transition: all 0.2s ease;
+      transition: background-color 0.18s ease, color 0.18s ease;
       cursor: pointer;
       border-radius: 6px;
-      padding: 2px 5px;
+      padding: 2px 4px;
+      -webkit-box-decoration-break: clone;
+      box-decoration-break: clone;
     }
     .reading-highlight:hover {
       background-color: rgba(255, 255, 255, 0.16);
       color: #ffffff;
     }
     .tts-active {
-      background-color: rgba(99, 102, 241, 0.75) !important;
-      backdrop-filter: blur(8px);
+      background-color: rgba(99, 102, 241, 0.85) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
       color: #ffffff !important;
-      box-shadow: 0 6px 18px rgba(99, 102, 241, 0.55);
+      box-shadow: none !important;
+      -webkit-box-decoration-break: clone;
+      box-decoration-break: clone;
     }
 
     /* Unified Lightweight Single-Layer Glass Dock (Matches Official Test Directions) */
@@ -997,9 +1002,9 @@
               </div>
               <textarea id="manualTranscriptInput" rows="3" oninput="saveCurrentQuestionTranscript(this.value)" placeholder="답변 내용이 여기에 입력됩니다..." class="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-slate-100 focus:outline-none focus:border-brand-500 resize-none font-sans leading-relaxed"></textarea>
               <div class="flex justify-end">
-                <button type="button" onclick="runManualAnalysis()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:brightness-110 text-white text-xs font-bold shadow-md shadow-brand-500/20 transition flex items-center space-x-1.5">
+                <button type="button" onclick="runManualAnalysis()" class="btn-ai-rescore px-4 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold shadow-md shadow-brand-500/20 transition flex items-center space-x-1.5">
                   <i class="fa-solid fa-bolt"></i>
-                  <span>⚡ 즉시 재채점 실행</span>
+                  <span class="btn-ai-rescore-text">구글 ai 전용 재채점 실행</span>
                 </button>
               </div>
             </div>
@@ -1105,12 +1110,18 @@
                 <div class="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-2">
                   <span class="font-bold text-indigo-300 flex items-center gap-1.5">
                     <i class="fa-solid fa-spell-check"></i>
-                    <span>🔍 문장 정확성 · 문법 오류 정밀 첨삭 (오류 발견 시 점수 자동 차감 반영)</span>
+                    <span>[구글AI분석] 문장 정확성 · 문법 오류 정밀 첨삭 (오류 발견 시 점수 자동 차감 반영)</span>
                   </span>
-                  <span id="grammarPenaltyBadge" class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[11px] font-bold">문법 감점: 0점</span>
+                  <div class="flex items-center gap-2">
+                    <button type="button" onclick="runManualAnalysis()" class="btn-ai-rescore px-2.5 py-1 rounded-lg bg-gradient-to-r from-brand-600 to-indigo-600 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[11px] font-bold shadow-sm transition flex items-center space-x-1">
+                      <i class="fa-solid fa-bolt text-[10px]"></i>
+                      <span class="btn-ai-rescore-text">구글 ai 전용 재채점 실행</span>
+                    </button>
+                    <span id="grammarPenaltyBadge" class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[11px] font-bold">문법 감점: 0점</span>
+                  </div>
                 </div>
                 <div id="grammarStatusSummary" class="text-slate-200 leading-relaxed">
-                  답변 녹음 완료 또는 [⚡ 즉시 재채점 실행]을 누르면 문법상 틀린 위치와 올바른 교정 문장을 진단해 드립니다.
+                  답변 녹음 완료 또는 [구글 ai 전용 재채점 실행]을 누르면 문법상 틀린 위치와 올바른 교정 문장을 진단해 드립니다.
                 </div>
                 <div id="grammarCorrectionList" class="space-y-1.5 text-[11px]">
                   <!-- Dynamically populated grammar error breakdown & corrected sentence -->
@@ -6321,6 +6332,7 @@ Student's Spoken Answer: "${sourceText}"
 Analyze whether the student's answer is grammatically correct and relevant to the prompt.
 Return ONLY valid JSON:
 {
+  "aiTotalScore": 150,
   "errorCount": 0,
   "penaltyPoints": 0,
   "isContextMatched": true,
@@ -6337,6 +6349,14 @@ Return ONLY valid JSON:
       try {
         const aiRes = await fetchGeminiTextJson(prompt);
         if (aiRes && typeof aiRes.errorCount === 'number') {
+          const maxGrammarPts = currentPart === 2 ? 35 : 40;
+          const errCnt = Array.isArray(aiRes.errors) ? aiRes.errors.length : (aiRes.errorCount || 0);
+          aiRes.errorCount = errCnt;
+          aiRes.penaltyPoints = Math.min(maxGrammarPts, errCnt * 15);
+          aiRes.grammarScore = Math.max(0, maxGrammarPts - aiRes.penaltyPoints);
+          aiRes.maxGrammarPoints = maxGrammarPts;
+          aiRes.hasVerb = true;
+
           rec.aiGrammarCacheText = sourceText.trim();
           rec.aiGrammarResult = aiRes;
           renderGrammarDiagnosisUI(aiRes, sourceText, true);
@@ -6363,7 +6383,7 @@ Return ONLY valid JSON:
       } else {
         badgeEl.innerText = `문법·완성도 감점: -${penalty}점 (${errCount}건 감지)`;
         badgeEl.className = "px-2 py-0.5 rounded bg-rose-500/25 border border-rose-400/50 text-rose-200 font-mono text-[11px] font-bold";
-        summaryEl.innerHTML = `<span class="text-rose-300 font-bold">⚠️ 총 ${errCount}개의 문법/문장 오류가 감지되어 예상 등급에서 -${penalty}점 감점 반영되었습니다.</span> 아래 수정 포인트를 고친 뒤 <b>[⚡ 즉시 재채점 실행]</b>을 누르면 점수가 즉시 회복됩니다!`;
+        summaryEl.innerHTML = `<span class="text-rose-300 font-bold">⚠️ 총 ${errCount}개의 문법/문장 오류가 감지되어 예상 등급에서 -${penalty}점 감점 반영되었습니다.</span> 아래 수정 포인트를 고친 뒤 <b>[구글 ai 전용 재채점 실행]</b>을 누르면 점수가 즉시 회복됩니다!`;
 
         const itemsHtml = (diag.errors || []).map((err, idx) => `
           <div class="p-2.5 rounded-lg bg-slate-950/90 border border-rose-500/25 space-y-1">
@@ -6389,7 +6409,39 @@ Return ONLY valid JSON:
       }
     }
 
+    let manualRescoreCooldown = 0;
+    let manualRescoreCooldownTimer = null;
+
+    function startManualRescoreCooldown(sec = 8) {
+      manualRescoreCooldown = sec;
+      const btns = document.querySelectorAll('.btn-ai-rescore');
+      const txts = document.querySelectorAll('.btn-ai-rescore-text');
+
+      btns.forEach(b => { b.disabled = true; });
+      txts.forEach(t => { t.innerText = `구글 ai 전용 재채점 실행 (${manualRescoreCooldown}초)`; });
+
+      if (manualRescoreCooldownTimer) clearInterval(manualRescoreCooldownTimer);
+      manualRescoreCooldownTimer = setInterval(() => {
+        manualRescoreCooldown--;
+        if (manualRescoreCooldown <= 0) {
+          clearInterval(manualRescoreCooldownTimer);
+          manualRescoreCooldownTimer = null;
+          manualRescoreCooldown = 0;
+          btns.forEach(b => { b.disabled = false; });
+          txts.forEach(t => { t.innerText = '구글 ai 전용 재채점 실행'; });
+        } else {
+          txts.forEach(t => { t.innerText = `구글 ai 전용 재채점 실행 (${manualRescoreCooldown}초)`; });
+        }
+      }, 1000);
+    }
+
     async function runManualAnalysis() {
+      if (manualRescoreCooldown > 0) {
+        showToast(`⏳ 재채점 쿨타임 중입니다. (${manualRescoreCooldown}초 후 가능)`);
+        return;
+      }
+      startManualRescoreCooldown(8);
+
       saveCurrentQuestionTranscript(document.getElementById('manualTranscriptInput').value);
       evaluateTranscriptAndScore(true);
       const txt = document.getElementById('manualTranscriptInput').value.trim();
@@ -6684,7 +6736,13 @@ Return ONLY valid JSON:
         ].join('');
       }
 
-      return { hasContradiction, contradictionReason };
+      const currentStance = detectStance(spokenText);
+      const neutralCount = [0, 1, 2].filter(i => {
+        const t = i === currentQuestionIndex ? spokenText : part3UserTranscripts[i];
+        return t && t.trim().length >= 3 && detectStance(t) === "neutral";
+      }).length;
+
+      return { hasContradiction, contradictionReason, currentStance, neutralCount };
     }
 
     function analyzePart1ReadingAccuracy(spokenText) {
@@ -6707,6 +6765,7 @@ Return ONLY valid JSON:
       const matchedCount = cleanOriginalWords.filter(w => spokenWordSet.has(w)).length;
       const accuracy = cleanOriginalWords.length > 0 ? Math.min(100, Math.round((matchedCount / cleanOriginalWords.length) * 100)) : 0;
       window.lastP1Accuracy = accuracy;
+      window.lastP1MissedCount = missedWords.length;
 
       const scoreBadge = document.getElementById('p1AccuracyScore');
       if (scoreBadge) {
@@ -7378,6 +7437,990 @@ Return ONLY valid JSON:
     }
 
     /* =====================================================================
+       11. STRICT 200-POINT CALIBRATED SCORING ENGINE (AUTO-INTEGRATED)
+       - 6대 영역 200점 만점 + 최종 -20점 하향 보정 자동 연동
+       - Part 2 (-ing 1회+ / 공간전치사 수준별 차등 / 실제 사진 키워드 매칭)
+       - Part 4 (표 tableRows 1:1 팩트체크 및 한국어 오답 사유 상세 해설)
+       - 조기 종료 시 남은 마지막 공백은 감점 0점, 말하는 도중 3초+ 침묵만 감점
+       ===================================================================== */
+    let calibrationSpeechStartMs = null;
+    let calibrationLastSpeechMs = null;
+    let calibrationMidPauseCount = 0;
+    let calibrationMidPauseLogs = [];
+    let calibrationVolumeSamples = [];
+    let calibrationConfidenceSamples = [];
+
+    function resetCalibrationMetrics() {
+      calibrationSpeechStartMs = null;
+      calibrationLastSpeechMs = null;
+      calibrationMidPauseCount = 0;
+      calibrationMidPauseLogs = [];
+      calibrationVolumeSamples = [];
+      calibrationConfidenceSamples = [];
+    }
+
+    drawVisualizer = function () {
+      const canvas = document.getElementById('visualizerCanvas');
+      if (!canvas || !analyser) return;
+      const ctx = canvas.getContext('2d');
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      function render() {
+        if (engineState !== 'recording') return;
+        visualizerAnimationId = requestAnimationFrame(render);
+        analyser.getByteFrequencyData(dataArray);
+
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
+        const avgEnergy = sum / bufferLength;
+        if (avgEnergy > 12) {
+          calibrationVolumeSamples.push(avgEnergy);
+        }
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const barWidth = (canvas.width / bufferLength) * 1.5;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          const barHeight = (dataArray[i] / 255) * canvas.height;
+          ctx.fillStyle = `rgb(${dataArray[i] + 70}, 99, 241)`;
+          ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+          x += barWidth;
+        }
+      }
+      render();
+    };
+
+    initSpeechRecognition = function () {
+      resetCalibrationMetrics();
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        const badge = document.getElementById('sttStatusBadge');
+        if (badge) badge.innerText = "브라우저 STT 미지원";
+        return;
+      }
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        isSttActive = true;
+        const badge = document.getElementById('sttStatusBadge');
+        if (badge) {
+          badge.innerText = "실시간 영어 인식 중";
+          badge.className = "px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[11px] font-semibold";
+        }
+      };
+
+      recognition.onresult = (event) => {
+        const nowMs = Date.now();
+        let finalStr = "";
+        let interimStr = "";
+
+        for (let i = 0; i < event.results.length; ++i) {
+          const res = event.results[i];
+          if (res.isFinal) {
+            finalStr += res[0].transcript + " ";
+            if (typeof res[0].confidence === 'number' && res[0].confidence > 0) {
+              calibrationConfidenceSamples.push(res[0].confidence);
+            }
+          } else {
+            interimStr += res[0].transcript;
+          }
+        }
+
+        const currentCombined = (finalStr + interimStr).trim();
+        const prevWords = countWords(liveTranscript);
+        const currentWords = countWords(currentCombined);
+
+        if (currentWords > prevWords) {
+          if (calibrationSpeechStartMs === null) {
+            calibrationSpeechStartMs = nowMs;
+          } else if (calibrationLastSpeechMs !== null) {
+            const gapSec = (nowMs - calibrationLastSpeechMs) / 1000;
+            if (gapSec >= 3.0) {
+              calibrationMidPauseCount++;
+              calibrationMidPauseLogs.push(Number(gapSec.toFixed(1)));
+            }
+          }
+          calibrationLastSpeechMs = nowMs;
+        }
+
+        liveTranscript = finalStr + interimStr;
+        const displayEl = document.getElementById('liveTranscriptDisplay');
+        if (displayEl) {
+          displayEl.innerHTML = `<span class="text-white">${finalStr}</span><span class="text-brand-300 italic">${interimStr}</span>`;
+          displayEl.scrollTop = displayEl.scrollHeight;
+        }
+
+        const liveWordsEl = document.getElementById('liveLiveWords');
+        if (liveWordsEl) liveWordsEl.innerText = currentWords;
+      };
+
+      recognition.onerror = (e) => {
+        console.warn("STT Error:", e.error);
+      };
+
+      recognition.onend = () => {
+        if (engineState === 'recording' && isSttActive) {
+          try { recognition.start(); } catch (err) {}
+        }
+      };
+
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn("Recognition start failed:", e);
+      }
+    };
+
+    function analyzeVocabularyDiversity(text, maxPoints = 30) {
+      const words = (text || "")
+        .toLowerCase()
+        .replace(/[^\w\s']/g, " ")
+        .split(/\s+/)
+        .filter(w => w.length > 1);
+
+      if (words.length === 0) {
+        return {
+          score: 0,
+          maxPoints,
+          repetitionPenalty: 0,
+          repeatedWords: [],
+          discourseLevel: "없음",
+          comment: "발화된 어휘가 없습니다."
+        };
+      }
+
+      const stopWords = new Set([
+        "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "from", "by", "about",
+        "and", "or", "but", "so", "because", "if", "when", "that", "this", "these", "those",
+        "i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her", "our", "their", "me", "him", "them",
+        "is", "am", "are", "was", "were", "be", "been", "have", "has", "had", "do", "does", "did",
+        "will", "would", "can", "could", "should", "there", "here", "not", "no", "yes", "very", "also"
+      ]);
+
+      const contentWordCounts = {};
+      words.forEach(w => {
+        if (!stopWords.has(w) && w.length >= 3) {
+          contentWordCounts[w] = (contentWordCounts[w] || 0) + 1;
+        }
+      });
+
+      const repeatedWords = Object.entries(contentWordCounts)
+        .filter(([w, cnt]) => cnt >= 3)
+        .map(([w, cnt]) => `${w}(${cnt}회)`);
+
+      const uniqueRatio = new Set(words).size / words.length;
+      const diversityMax = Math.round(maxPoints * 0.5);
+      const structureMax = maxPoints - diversityMax;
+
+      let diversityScore = Math.round(diversityMax * Math.min(1, uniqueRatio / 0.62));
+      let repetitionPenalty = 0;
+      if (repeatedWords.length >= 2) {
+        repetitionPenalty = 10;
+      } else if (repeatedWords.length === 1) {
+        repetitionPenalty = 5;
+      }
+      diversityScore = Math.max(0, diversityScore - repetitionPenalty);
+
+      const lower = text.toLowerCase();
+      const advMarkers = (lower.match(/\b(according to|furthermore|moreover|therefore|however|in addition|for example|for instance|unfortunately|specifically|overall|consequently|nevertheless|although|whereas|while)\b/g) || []).length;
+      const midMarkers = (lower.match(/\b(first|second|third|because|since|instead|actually|usually|especially|recently|currently)\b/g) || []).length;
+
+      let structureScore = 3;
+      let discourseLevel = "초급 단문 위주";
+      if (advMarkers >= 2 || (advMarkers >= 1 && midMarkers >= 2)) {
+        structureScore = structureMax;
+        discourseLevel = "고급 복문·담화 연결어 구사";
+      } else if (advMarkers >= 1 || midMarkers >= 2) {
+        structureScore = Math.round(structureMax * 0.68);
+        discourseLevel = "중급 연결어(First/Because 등) 구사";
+      } else if (words.length < 6) {
+        structureScore = 1;
+        discourseLevel = "단어·구절 나열 수준";
+      }
+
+      return {
+        score: Math.min(maxPoints, diversityScore + structureScore),
+        maxPoints,
+        repetitionPenalty,
+        repeatedWords,
+        discourseLevel,
+        comment: repeatedWords.length > 0
+          ? `동일 단어 반복 감점(-${repetitionPenalty}점): ${repeatedWords.join(", ")}`
+          : `어휘 다양성 양호 (${discourseLevel})`
+      };
+    }
+
+    analyzeGrammarAndSentenceValidity = function (text, partNum) {
+      const maxGrammarPoints = partNum === 2 ? 35 : 40;
+      const clean = (text || "").trim();
+
+      if (!clean) {
+        return {
+          errorCount: 3,
+          penaltyPoints: maxGrammarPoints,
+          grammarScore: 0,
+          maxGrammarPoints,
+          hasVerb: false,
+          isContextMatched: false,
+          errors: [
+            {
+              wrong: "(발화 내용 없음)",
+              fix: "완전한 주어 + 동사 문장으로 답변을 입력하거나 녹음해 주세요.",
+              reason: "답변이 비어 있어 문법 및 발화 점수가 0점 처리됩니다."
+            }
+          ],
+          correctedFull: ""
+        };
+      }
+
+      const errors = [];
+      let correctedFull = clean;
+
+      const verbRegex = /\b(am|is|are|was|were|be|been|have|has|had|do|does|did|can|could|will|would|should|must|may|might|like|likes|love|loves|prefer|prefers|think|thinks|believe|believes|go|goes|went|visit|visits|use|uses|work|works|eat|eats|serve|serves|sell|sells|start|starts|begin|begins|end|ends|finish|finishes|help|helps|save|saves|focus|focuses|enjoy|enjoys|recommend|recommends|choose|chooses|see|sees|look|looks|wear|wears|hold|holds|sit|sits|stand|stands|walk|walks|talk|talks|buy|buys|read|reads|cook|cooks|make|makes|take|takes|cancel|cancelled|canceled)\b/i;
+      const ingPresentRegex = /\b(am|is|are|was|were)\s+\w+ing\b/i;
+      const hasVerb = verbRegex.test(clean) || ingPresentRegex.test(clean);
+
+      if (!hasVerb) {
+        return {
+          errorCount: 3,
+          penaltyPoints: maxGrammarPoints,
+          grammarScore: 0,
+          maxGrammarPoints,
+          hasVerb: false,
+          isContextMatched: false,
+          errors: [
+            {
+              wrong: clean,
+              fix: `I can see ${clean.toLowerCase()}. / It is ${clean.toLowerCase()}.`,
+              reason: "[문장 미성립 (동사 누락 - 문법 0점)] 주어+동사가 없는 단순 단어 나열(Fragment)입니다. 토익스피킹에서 동사 없이 명사만 나열하면 문법 점수가 0점 처리됩니다."
+            }
+          ],
+          correctedFull: `I can see ${clean.toLowerCase()}.`
+        };
+      }
+
+      const missingBeBeforeIng = clean.match(/\b(he|she|it|they|we|I|a man|a woman|the man|the woman|one person|people|workers|shoppers)\s+(wearing|holding|sitting|standing|looking|talking|walking|working|pointing|reading|buying|carrying|smiling|using|eating|drinking)\b/gi);
+      if (missingBeBeforeIng) {
+        missingBeBeforeIng.forEach(hit => {
+          const fixedStr = hit.replace(/^(\S+(?:\s+\S+)?)\s+(\w+ing)$/i, (m, subj, v) => {
+            const isPlural = /^(they|we|people|workers|shoppers)$/i.test(subj.trim());
+            const isI = /^i$/i.test(subj.trim());
+            const beVerb = isI ? "am" : isPlural ? "are" : "is";
+            return `${subj} ${beVerb} ${v}`;
+          });
+          errors.push({
+            wrong: hit,
+            fix: fixedStr,
+            reason: "[be동사 누락 오류 (-15점)] 현재진행형(동작 묘사)을 말할 때는 '-ing' 앞에 반드시 'am / is / are'를 함께 말해야 합니다."
+          });
+        });
+      }
+
+      const svPatterns = [
+        {
+          regex: /\b(he|she|it|a man|a woman|the man|the woman|my favorite restaurant|the price|the food|the session|the class|the event|the workshop|the store|the park)\s+(are|were|have|go|like|want|serve|start|begin|end|finish|wear|hold|sit|stand|look|work|take|make|help|save)\b/gi,
+          reason: "3인칭 단수 주어 뒤에는 단수 동사(is/has/goes/starts/wears/holds 등 -s)를 써야 합니다."
+        },
+        {
+          regex: /\b(they|we|people|workers|students|commuters|customers|shoppers|two people|many people)\s+(is|was|has|goes|likes|starts|wears|holds|sits|stands|works)\b/gi,
+          reason: "복수 주어 뒤에는 복수 동사(are/were/have/동사원형)를 써야 합니다."
+        },
+        {
+          regex: /\bthere\s+is\s+(many|several|two|three|four|five|a lot of)\s+[a-z]+s\b/gi,
+          reason: "뒤에 복수 명사가 올 때는 'There is' 대신 'There are'를 사용해야 합니다."
+        },
+        {
+          regex: /\bI\s+(is|are|has|goes|likes|prefers|wants|works)\b/g,
+          reason: "주어 'I' 뒤에는 'am / have / 동사원형(like, prefer, work)'을 써야 합니다."
+        }
+      ];
+
+      svPatterns.forEach(rule => {
+        const matches = clean.match(rule.regex);
+        if (matches) {
+          matches.forEach(hit => {
+            errors.push({
+              wrong: hit,
+              fix: hit
+                .replace(/\bare\b/i, "is")
+                .replace(/\bwere\b/i, "was")
+                .replace(/\bhave\b/i, "has")
+                .replace(/\bthere\s+is\b/i, "There are"),
+              reason: `[수일치 오류 (-15점)] ${rule.reason}`
+            });
+          });
+        }
+      });
+
+      const articleAn = clean.match(/\ba\s+(apple|office|hour|honest|umbrella|orange|event|evening|afternoon|outdoor|expensive|important|easy|interesting)\b/gi);
+      if (articleAn) {
+        articleAn.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: hit.replace(/^a\s+/i, "an "),
+            reason: "[관사 오류 (-15점)] 모음 발음으로 시작하는 단어 앞에는 'a' 대신 'an'을 써야 합니다."
+          });
+        });
+      }
+
+      const pluralMismatch = clean.match(/\b(many|several|two|three|four|five)\s+(book|friend|reason|person|restaurant|park|session|class|student|worker|hour|minute|dollar|day|year|table|chair|tree|picture)\b/gi);
+      if (pluralMismatch) {
+        pluralMismatch.forEach(hit => {
+          const fixed = /\bperson\b/i.test(hit)
+            ? hit.replace(/person/i, "people")
+            : /\bclass\b/i.test(hit)
+            ? `${hit}es`
+            : `${hit}s`;
+          errors.push({
+            wrong: hit,
+            fix: fixed,
+            reason: "[명사 복수형 누락 (-15점)] 'two / three / many' 등 복수 수량 표현 뒤에는 복수 명사(-s/-es/people)를 써야 합니다."
+          });
+        });
+      }
+
+      const prepPatterns = [
+        { regex: /\bgo\s+to\s+home\b/gi, fix: "go home", reason: "[전치사 오류 (-15점)] 'home(집으로)'은 부사이므로 앞에 'to'를 쓰지 않습니다." },
+        { regex: /\b(can|will|should|would|must|could)\s+(goes|went|going|is|are|has|having|likes|liked|works|worked|saves|saved|starts|started)\b/gi, fix: "조동사 + 동사원형", reason: "[조동사 문법 오류 (-15점)] 조동사(can/will/would/should) 뒤에는 반드시 동사원형이 와야 합니다." },
+        { regex: /\b(in|at|on|for|by|without|about)\s+(go|eat|work|study|buy|watch|walk|visit|use|take|save)\b/gi, fix: "전치사 + 동명사(-ing)", reason: "[전치사 뒤 동사 형태 오류 (-15점)] 전치사 뒤에는 동명사(-ing) 형태를 써야 합니다." },
+        { regex: /\b(at|in)\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|weekends)\b/gi, fix: "on + 요일/주말", reason: "[시간 전치사 오류 (-15점)] 특정 요일이나 주말 앞에는 전치사 'on'을 씁니다." },
+        { regex: /\b(in|on)\s+\d{1,2}(:\d{2})?\s*(am|pm|o'clock)\b/gi, fix: "at + 시각", reason: "[시간 전치사 오류 (-15점)] 구체적인 시각(예: 9:00 AM) 앞에는 전치사 'at'을 씁니다." }
+      ];
+      prepPatterns.forEach(rule => {
+        const m = clean.match(rule.regex);
+        if (m) {
+          m.forEach(hit => {
+            errors.push({ wrong: hit, fix: rule.fix, reason: rule.reason });
+          });
+        }
+      });
+
+      if (partNum !== 1 && countWords(clean) < 7) {
+        errors.push({
+          wrong: clean,
+          fix: `${clean}, and it is very convenient for me.`,
+          reason: "[단일 단문 미완성 (-15점)] 발화량이 지나치게 짧은 단일 구절에 그쳤습니다. 최소 2문장 이상으로 연결해 주세요."
+        });
+      }
+
+      correctedFull = correctedFull
+        .replace(/\b(he|she|it)\s+are\b/gi, "$1 is")
+        .replace(/\b(he|she|it)\s+have\b/gi, "$1 has")
+        .replace(/\b(they|we|people)\s+is\b/gi, "$1 are")
+        .replace(/\b(he|she)\s+(wearing|holding|sitting|standing|looking|talking)\b/gi, "$1 is $2")
+        .replace(/\b(they|people)\s+(wearing|holding|sitting|standing|looking|talking)\b/gi, "$1 are $2")
+        .replace(/\bI\s+is\b/g, "I am")
+        .replace(/\bgo\s+to\s+home\b/gi, "go home")
+        .replace(/\ba\s+(apple|office|hour|event|evening|afternoon|outdoor|expensive|important|easy|interesting)\b/gi, "an $1");
+
+      const uniqueErrors = errors.slice(0, 5);
+      const penaltyPoints = Math.min(maxGrammarPoints, uniqueErrors.length * 15);
+      const grammarScore = Math.max(0, maxGrammarPoints - penaltyPoints);
+
+      return {
+        errorCount: uniqueErrors.length,
+        penaltyPoints,
+        grammarScore,
+        maxGrammarPoints,
+        hasVerb: true,
+        isContextMatched: true,
+        errors: uniqueErrors,
+        correctedFull
+      };
+    };
+
+    function evaluatePart2TaskFulfillment(spokenText) {
+      const lower = (spokenText || "").toLowerCase();
+      const feedbackNotes = [];
+
+      const ingMatches = lower.match(/\b(is|are|am|was|were|see\s+[a-z]+\s+|people\s+|man\s+|woman\s+|workers\s+|shoppers\s+)?(wearing|holding|sitting|standing|looking|talking|walking|working|typing|pointing|listening|taking|carrying|buying|picking|checking|crossing|relaxing|enjoying|hanging|shining|smiling|reading|drinking|eating|using|having|gathering|leading|explaining|jotting|browsing|reaching|conversing|strolling)\b/g) || [];
+      const hasProgressiveVerb = ingMatches.length >= 1;
+      const ingScore = hasProgressiveVerb ? 15 : 0;
+
+      if (hasProgressiveVerb) {
+        feedbackNotes.push(`✅ <b>현재진행형(-ing) 동작 묘사 달성 (+15점):</b> <code>${ingMatches.slice(0, 3).join(", ")}</code> 등 생동감 있는 동작 표현을 사용했습니다.`);
+      } else {
+        feedbackNotes.push(`❌ <b>현재진행형(-ing) 미사용 (0점 / -15점 손실):</b> 사진 속 인물의 동작이나 착장을 말할 때 <code>is wearing</code>, <code>are sitting</code>, <code>is holding</code> 등 <b>-ing 표현을 최소 1회 이상</b> 반드시 포함해야 합니다.`);
+      }
+
+      const spatialPhrasesList = [
+        "in front of", "next to", "on the table", "on the wooden table", "in the background",
+        "in the foreground", "on the left", "on the right", "in the center", "in the middle",
+        "around the table", "around the", "beside", "behind", "between", "under the",
+        "near the", "along the", "on the shelves", "on the shelf", "on the racks",
+        "on a bench", "on the bench", "at a table", "at the table", "from the ceiling", "on both sides"
+      ];
+      const matchedSpatial = spatialPhrasesList.filter(phrase => lower.includes(phrase));
+      let spatialScore = 4;
+
+      if (matchedSpatial.length >= 2) {
+        spatialScore = 20;
+        feedbackNotes.push(`✅ <b>공간 전치사구 우수 (+20점 만점):</b> <code>${matchedSpatial.slice(0, 3).join(", ")}</code> 등 위치를 입체적으로 짚어주었습니다.`);
+      } else if (matchedSpatial.length === 1) {
+        spatialScore = 12;
+        feedbackNotes.push(`⚠️ <b>공간 전치사구 보통 (+12점 / 20점 만점):</b> <code>${matchedSpatial[0]}</code> 1개만 사용되었습니다. <code>in the background</code>, <code>next to</code>, <code>on the left</code> 등을 1개만 더 추가하면 +8점이 올라갑니다!`);
+      } else {
+        spatialScore = 4;
+        feedbackNotes.push(`❌ <b>공간 전치사구 부족 (+4점 / 고득점자와 16점 차이!):</b> <code>in front of</code>, <code>next to</code>, <code>on the table</code>, <code>in the background</code> 같은 위치 표현이 빠져 초보자(IL) 수준으로 채점되었습니다.`);
+      }
+
+      const photoObj = (typeof PART2_PHOTO_BANK !== 'undefined' && PART2_PHOTO_BANK[currentPart2Index])
+        ? PART2_PHOTO_BANK[currentPart2Index]
+        : null;
+
+      let photoKeyWords = ["people", "man", "woman", "table", "laptop", "coffee", "shirt", "glasses", "room", "park", "bench", "tree", "book", "shelf", "market", "fruit", "cloth", "helmet"];
+      if (photoObj) {
+        const sampleCorpus = [
+          ...(photoObj.ilAnswers || []).map(a => a.text),
+          ...(photoObj.stepAnswers || []).map(a => a.text)
+        ].join(" ").toLowerCase();
+
+        const extracted = sampleCorpus
+          .replace(/[^\w\s]/g, " ")
+          .split(/\s+/)
+          .filter(w => w.length >= 4 && !["this", "picture", "photo", "taken", "there", "overall", "very", "look", "looks", "with", "from", "they", "have", "some", "other", "wearing", "sitting", "standing", "holding"].includes(w));
+        photoKeyWords = Array.from(new Set(extracted));
+      }
+
+      const matchedPhotoWords = photoKeyWords.filter(kw => lower.includes(kw));
+      let keywordScore = 0;
+      if (matchedPhotoWords.length >= 3) {
+        keywordScore = 15;
+        feedbackNotes.push(`✅ <b>사진 속 실제 사물·배경 일치 (+15점):</b> <code>${matchedPhotoWords.slice(0, 5).join(", ")}</code> 등 사진의 핵심 요소를 정확히 묘사했습니다.`);
+      } else if (matchedPhotoWords.length >= 1) {
+        keywordScore = 8;
+        feedbackNotes.push(`⚠️ <b>사진 핵심 사물 언급 부족 (+8점 / 15점):</b> 사진 속 사물·배경 단어(<code>${photoKeyWords.slice(0, 5).join(", ")}</code> 등)를 3개 이상 구체적으로 말해 주세요.`);
+      } else {
+        keywordScore = 0;
+        feedbackNotes.push(`🚨 <b>사진 내용 불일치 경고 (0점):</b> 현재 화면의 사진 속 인물이나 사물 키워드가 전혀 언급되지 않았습니다. 암기한 만능 문장만 말하면 크게 감점됩니다!`);
+      }
+
+      return {
+        totalTaskScore: ingScore + spatialScore + keywordScore,
+        maxTaskScore: 50,
+        ingScore,
+        spatialScore,
+        keywordScore,
+        feedbackNotes
+      };
+    }
+
+    function evaluatePart4TableFactCheck(spokenText, qIdx) {
+      const lower = (spokenText || "").toLowerCase();
+      const feedbackNotes = [];
+
+      const defaultRows = [
+        { time: "09:00 AM - 10:00 AM", title: "Opening Keynote: AI in Modern Marketing", speaker: "", isCancelled: false },
+        { time: "10:30 AM - 12:00 PM", title: "Social Media Brand Strategy", speaker: "Emma Watson", isCancelled: false },
+        { time: "01:30 PM - 02:30 PM", title: "Global SEO Best Practices (*CANCELLED*)", speaker: "", isCancelled: true },
+        { time: "03:00 PM - 04:30 PM", title: "Workshop: Customer Retention (Hands-on)", speaker: "", isCancelled: false }
+      ];
+
+      const p4Data = window.customPart4Data || {
+        tableTitle: "Annual Marketing Conference",
+        tableDate: "October 15, Room 302",
+        tableRows: defaultRows,
+        questions: PART4_DEFAULT_META.questions
+      };
+
+      const rows = (p4Data.tableRows && p4Data.tableRows.length >= 4) ? p4Data.tableRows : defaultRows;
+      const curQuestion = ((p4Data.questions && p4Data.questions[qIdx]) || PART4_DEFAULT_META.questions[qIdx] || "").toLowerCase();
+
+      const numWordsMap = {
+        "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six",
+        "7": "seven", "8": "eight", "9": "nine", "10": "ten", "11": "eleven", "12": "twelve",
+        "15": "fifteen", "30": "thirty", "45": "forty-five"
+      };
+
+      const checkTimeMentioned = (timeStr) => {
+        const startPart = (timeStr || "").split("-")[0].trim();
+        const hmMatch = startPart.match(/(\d{1,2}):(\d{2})/);
+        if (!hmMatch) return true;
+        const hourNum = String(parseInt(hmMatch[1], 10));
+        const minNum = hmMatch[2];
+        const hourWord = numWordsMap[hourNum] || hourNum;
+
+        const hasHour = lower.includes(hourNum) || lower.includes(hourWord);
+        if (minNum === "00") return hasHour;
+        const minWord = numWordsMap[minNum] || minNum;
+        return hasHour && (lower.includes(minNum) || lower.includes(minWord));
+      };
+
+      const extractTitleKeywords = (row) => {
+        const raw = `${row.title || ""} ${row.speaker || ""}`
+          .replace(/\(\*CANCELLED\*\)/gi, "")
+          .toLowerCase();
+        return raw.replace(/[^\w\s]/g, " ").split(/\s+/).filter(w => w.length >= 3 && !["the", "and", "for", "with", "from", "session", "class", "workshop", "speaker"].includes(w));
+      };
+
+      let factScore = 0;
+      let responseScore = 0;
+
+      if (qIdx === 0) {
+        let targetRow = rows[0];
+        for (const r of rows) {
+          const kws = extractTitleKeywords(r);
+          if (kws.some(k => curQuestion.includes(k))) {
+            targetRow = r;
+            break;
+          }
+        }
+
+        const timeOk = checkTimeMentioned(targetRow.time);
+        const targetKws = extractTitleKeywords(targetRow);
+        const matchedKws = targetKws.filter(k => lower.includes(k));
+        const speakerKws = (targetRow.speaker || "").toLowerCase().split(/\s+/).filter(Boolean);
+        const speakerOk = speakerKws.length === 0 || speakerKws.some(sk => lower.includes(sk));
+
+        if (timeOk && matchedKws.length >= 1 && speakerOk) {
+          factScore = 25;
+          feedbackNotes.push(`✅ <b>[Q8 표 팩트체크 정확 (+25점)]</b> 표에 기재된 시간(<code>${targetRow.time}</code>)과 핵심 정보(<code>${targetRow.title}${targetRow.speaker ? ' / ' + targetRow.speaker : ''}</code>)를 정확히 말씀하셨습니다!`);
+        } else {
+          if (!timeOk) {
+            feedbackNotes.push(`❌ <b>[Q8 시간 정보 누락·오류 감점]</b> 표에는 해당 세션 시간이 <b>${targetRow.time}</b>으로 적혀 있는데, 정확한 시작 시각 숫자를 말씀하지 않으셔서 감점되었습니다.`);
+          } else {
+            factScore += 12;
+          }
+          if (matchedKws.length === 0 || !speakerOk) {
+            feedbackNotes.push(`❌ <b>[Q8 주제/발표자 누락 감점]</b> 표에 적힌 핵심 정보(<b>${targetRow.title}${targetRow.speaker ? ', 발표자: ' + targetRow.speaker : ''}</b>)가 답변에서 확인되지 않아 감점되었습니다.`);
+          } else {
+            factScore += 10;
+          }
+        }
+
+        const hasOpening = /\b(sure|yes|certainly|according to|schedule|begins at|starts at|held on|room|hall|ballroom|studio)\b/i.test(lower);
+        responseScore = hasOpening ? 15 : 7;
+
+      } else if (qIdx === 1) {
+        const cancelledRow = rows.find(r => r.isCancelled) || rows[2];
+        const altRow = rows[3] || rows[rows.length - 1];
+        const cleanCancelledTitle = cancelledRow.title.replace(/\(\*CANCELLED\*\)/gi, "").trim();
+
+        const mentionedCancelWord = /\b(cancel|cancelled|canceled|not available|no longer available|cannot attend|can't attend|won't take place|not taking place)\b/i.test(lower);
+        const mentionedApology = /\b(sorry|afraid|unfortunately|apologize|bad news|change)\b/i.test(lower);
+        const altKws = extractTitleKeywords(altRow);
+        const mentionedAlternative = /\b(instead|alternative|another|however)\b/i.test(lower) || altKws.some(k => lower.includes(k));
+
+        if (mentionedCancelWord) {
+          factScore = 25;
+          feedbackNotes.push(`✅ <b>[Q9 취소 일정 팩트체크 통과 (+25점)]</b> 표의 <b>${cancelledRow.time} (${cleanCancelledTitle})</b> 일정이 취소(<code>cancelled</code>)되었다는 핵심 사실을 정확히 짚어주셨습니다!`);
+        } else {
+          factScore = 0;
+          feedbackNotes.push(`🚨 <b>[Q9 치명적 오답 감점 (-25점)]</b> 표에는 <b>${cancelledRow.time} '${cleanCancelledTitle}'</b> 세션에 <b>*CANCELLED*(취소됨)</b> 표시가 되어 있는데, 답변에서 취소되었다(<code>cancelled</code> / <code>cannot attend</code>)는 말을 하지 않거나 정상 진행된다고 답하셔서 크게 감점되었습니다!`);
+        }
+
+        if (mentionedApology && mentionedAlternative) {
+          responseScore = 15;
+          feedbackNotes.push(`✅ <b>[Q9 사과 오프닝 & 대안 일정 안내 (+15점)]</b> 유감 표명(<code>sorry/unfortunately</code>)과 함께 대안 세션(<b>${altRow.time}</b>)까지 완벽히 안내하셨습니다.`);
+        } else if (mentionedApology || mentionedAlternative) {
+          responseScore = 9;
+          feedbackNotes.push(`⚠️ <b>[Q9 대안 안내 보완 팁 (+9점 / 15점)]</b> 취소 사실 전달 후 <code>Instead, there is ~ at ${altRow.time}</code>으로 아랫줄 대안 일정을 함께 추천하면 만점을 받을 수 있습니다.`);
+        } else {
+          responseScore = 3;
+          feedbackNotes.push(`⚠️ <b>[Q9 비즈니스 사과 표현 누락]</b> Q9는 상대방의 예상을 정정하는 문제이므로 첫 문장을 <code>I'm sorry, but...</code>으로 시작하세요.`);
+        }
+
+      } else {
+        const activeRows = rows.filter(r => !r.isCancelled);
+        let matchedRowCount = 0;
+        activeRows.forEach(r => {
+          const kws = extractTitleKeywords(r);
+          const hasTime = checkTimeMentioned(r.time);
+          const hasKw = kws.some(k => lower.includes(k));
+          if (hasTime && hasKw) {
+            matchedRowCount++;
+          }
+        });
+
+        const cancelledRow = rows.find(r => r.isCancelled);
+        const cancelKws = cancelledRow ? extractTitleKeywords(cancelledRow) : [];
+        const talkedAboutCancelledRow = cancelKws.some(k => lower.includes(k));
+        const mentionedCancelWord = /\b(cancel|cancelled|canceled)\b/i.test(lower);
+
+        if (talkedAboutCancelledRow && !mentionedCancelWord) {
+          factScore = 10;
+          feedbackNotes.push(`🚨 <b>[Q10 취소선 일정 혼동 감점]</b> 취소된 세션(<b>${cancelledRow.time}</b>)을 언급하실 때는 반드시 <code>was cancelled</code>라고 밝혀야 감점되지 않습니다!`);
+        } else if (matchedRowCount >= 2) {
+          factScore = 25;
+          feedbackNotes.push(`✅ <b>[Q10 다중 일정 2개 모두 팩트체크 완료 (+25점)]</b> 표에서 요구된 두 세션의 시간과 제목을 빠짐없이 정확하게 안내하셨습니다!`);
+        } else if (matchedRowCount === 1) {
+          factScore = 13;
+          feedbackNotes.push(`⚠️ <b>[Q10 일정 1개 누락 감점 (+13점 / 25점)]</b> Q10은 표에서 <b>2개의 세션</b>을 모두 말해야 만점인데, 1개 세션의 시간·제목만 확인되었습니다. <code>First, ~ Second, ~</code> 구조로 두 줄을 모두 읽어주세요!`);
+        } else {
+          factScore = 0;
+          feedbackNotes.push(`❌ <b>[Q10 표 핵심 정보 미언급 (0점)]</b> 표에 적힌 세션들의 정확한 시간 숫자와 제목이 답변에서 확인되지 않았습니다.`);
+        }
+
+        const hasStructure = /\b(two|both|first|second|also|in addition|morning|afternoon)\b/i.test(lower);
+        responseScore = hasStructure ? 15 : 6;
+      }
+
+      return {
+        totalTaskScore: factScore + responseScore,
+        maxTaskScore: 40,
+        factScore,
+        responseScore,
+        feedbackNotes
+      };
+    }
+
+    function renderDetailed200RubricCard(data) {
+      const reportContainer = document.getElementById('aiReportCard');
+      const grammarBox = document.getElementById('grammarDiagnosisBox');
+      if (!reportContainer || !grammarBox) return;
+
+      let rubricBox = document.getElementById('strict200BreakdownBox');
+      if (!rubricBox) {
+        rubricBox = document.createElement('div');
+        rubricBox.id = 'strict200BreakdownBox';
+        rubricBox.className = 'p-4 bg-slate-900/90 rounded-xl border border-amber-500/30 text-xs text-left space-y-3';
+        reportContainer.insertBefore(rubricBox, grammarBox);
+      }
+
+      const pauseText = data.midPauseCount > 0
+        ? `<span class="text-rose-400 font-bold">중간 3초+ 멈칫 ${data.midPauseCount}회 감지 (-${data.midPauseCount * 10}점)</span>`
+        : `<span class="text-emerald-400 font-bold">중간 침묵 없음 (감점 0점)</span>`;
+
+      const trailingNote = data.trailingSilenceIgnoredSec > 0
+        ? `<span class="text-sky-300 text-[11px]">👍 조기 답변 완료 후 남은 마지막 ${data.trailingSilenceIgnoredSec}초 공백은 감점에서 100% 제외됨 (실발화 ${data.activeSpeakingSec}초 기준 채점)</span>`
+        : `<span class="text-slate-400 text-[11px]">실제 발화 구간(${data.activeSpeakingSec}초) 기준 WPM 및 유창성 측정 완료</span>`;
+
+      const taskNotesHtml = (data.taskFeedbackHtmlList || []).map(note => `
+        <div class="p-2 rounded-lg bg-slate-950/90 border border-white/10 text-slate-200 leading-relaxed text-[11px]">
+          ${note}
+        </div>
+      `).join('');
+
+      rubricBox.innerHTML = `
+        <div class="flex items-center justify-between flex-wrap gap-2 border-b border-white/10 pb-2">
+          <span class="font-extrabold text-amber-300 flex items-center gap-1.5">
+            <i class="fa-solid fa-sliders"></i>
+            <span>📊 200점 만점 6대 영역 정밀 채점표</span>
+          </span>
+          <span class="px-2.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 font-mono font-black text-xs">
+            최종 ${data.finalScore}점 / 200점
+          </span>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+          <div class="p-2.5 rounded-lg bg-white/[0.03] border border-white/10">
+            <div class="text-slate-400 font-medium">① 발성 · 발음 명확도</div>
+            <div class="text-sm font-black text-white font-mono mt-0.5">${data.score1VocalPron} <span class="text-xs text-slate-400">/ 30점</span></div>
+          </div>
+          <div class="p-2.5 rounded-lg bg-white/[0.03] border border-white/10">
+            <div class="text-slate-400 font-medium">② 단어 수 (발화량 배점 하향)</div>
+            <div class="text-sm font-black text-white font-mono mt-0.5">${data.score2WordCount} <span class="text-xs text-slate-400">/ 25점</span></div>
+          </div>
+          <div class="p-2.5 rounded-lg bg-white/[0.03] border border-white/10">
+            <div class="text-slate-400 font-medium">③ 유창성 · 중간 침묵</div>
+            <div class="text-sm font-black text-white font-mono mt-0.5">${data.score3Fluency} <span class="text-xs text-slate-400">/ 35점</span></div>
+            <div class="text-[10px] mt-0.5">${pauseText}</div>
+          </div>
+          <div class="p-2.5 rounded-lg bg-white/[0.03] border border-white/10">
+            <div class="text-slate-400 font-medium">④ 어휘 다양성 · 구문 수준</div>
+            <div class="text-sm font-black text-white font-mono mt-0.5">${data.score4Vocab} <span class="text-xs text-slate-400">/ ${data.maxVocabPts}점</span></div>
+            <div class="text-[10px] text-slate-300 mt-0.5 truncate">${data.vocabEval.comment}</div>
+          </div>
+          <div class="p-2.5 rounded-lg bg-white/[0.03] border border-white/10">
+            <div class="text-slate-400 font-medium">⑤ 문법 정확성 (-15점/건)</div>
+            <div class="text-sm font-black ${data.computedGrammarPenalty > 0 ? 'text-rose-400' : 'text-emerald-400'} font-mono mt-0.5">${data.score5Grammar} <span class="text-xs text-slate-400">/ ${data.maxGrammarPts}점</span></div>
+            <div class="text-[10px] text-slate-300 mt-0.5">${data.computedGrammarPenalty > 0 ? `문법 감점 -${data.computedGrammarPenalty}점` : '문법 무결점'}</div>
+          </div>
+          <div class="p-2.5 rounded-lg bg-white/[0.03] border border-white/10">
+            <div class="text-slate-400 font-medium">⑥ 파트 핵심 정답 · 팩트체크</div>
+            <div class="text-sm font-black text-indigo-300 font-mono mt-0.5">${data.score6Task} <span class="text-xs text-slate-400">/ ${data.maxTaskPts}점</span></div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between flex-wrap gap-1 pt-1">
+          ${trailingNote}
+        </div>
+
+        ${taskNotesHtml ? `<div class="space-y-1.5 pt-1 border-t border-white/10"><div class="font-bold text-indigo-300 text-[11px]">🎯 파트별 핵심 정답 · 팩트체크 상세 해설:</div>${taskNotesHtml}</div>` : ''}
+      `;
+    }
+
+    evaluateTranscriptAndScore = function (isManual = false) {
+      const manualEl = document.getElementById('manualTranscriptInput');
+      const sourceText = isManual
+        ? (manualEl ? manualEl.value.trim() : "")
+        : ((manualEl && manualEl.value.trim()) || liveTranscript.trim());
+
+      const words = countWords(sourceText);
+      const fillerMatches = sourceText.match(/\b(um|uh|er|ah|umm|uhh|you know)\b/gi);
+      const fillerCount = fillerMatches ? fillerMatches.length : 0;
+
+      const qMeta = TOS_EXAM_STRUCTURE[currentPart].questions[currentQuestionIndex];
+      const respSec = qMeta ? qMeta.respSec : 30;
+
+      let idealTargetWords = 45;
+      if (respSec === 15) idealTargetWords = 28;
+      else if (respSec === 30) idealTargetWords = 52;
+      else if (respSec === 45) idealTargetWords = 75;
+      else if (respSec === 60) idealTargetWords = 105;
+
+      let activeSpeakingSec = totalRecordingSeconds > 0 ? totalRecordingSeconds : respSec;
+      let trailingSilenceIgnoredSec = 0;
+
+      if (calibrationSpeechStartMs !== null && calibrationLastSpeechMs !== null && calibrationLastSpeechMs >= calibrationSpeechStartMs) {
+        const rawActiveSec = Math.max(3, Math.round((calibrationLastSpeechMs - calibrationSpeechStartMs) / 1000) + 2);
+        if (totalRecordingSeconds > rawActiveSec) {
+          trailingSilenceIgnoredSec = totalRecordingSeconds - rawActiveSec;
+          activeSpeakingSec = rawActiveSec;
+        }
+      }
+
+      const durationMins = Math.max(0.08, activeSpeakingSec / 60);
+      const wpm = words > 0 ? Math.round(words / durationMins) : 0;
+
+      const wordCountEl = document.getElementById('metricWordCount');
+      const targetWordsEl = document.getElementById('metricTargetWords');
+      const wpmEl = document.getElementById('metricWpm');
+      const fillerEl = document.getElementById('metricFillerCount');
+      if (wordCountEl) wordCountEl.innerText = words;
+      if (targetWordsEl) targetWordsEl.innerText = `/ ${idealTargetWords}단어 권장`;
+      if (wpmEl) wpmEl.innerText = wpm;
+      if (fillerEl) fillerEl.innerText = fillerCount;
+
+      const isGiveUp = words <= 2 || /^(i don't know|i do not know|no idea|sorry|nothing)\.?$/i.test(sourceText);
+      const rec = getQuestionResponseRecord(currentPart, currentQuestionIndex);
+      const grammarDiag = (rec.aiGrammarCacheText === sourceText && rec.aiGrammarResult)
+        ? rec.aiGrammarResult
+        : analyzeGrammarAndSentenceValidity(sourceText, currentPart);
+
+      const maxGrammarPts = currentPart === 2 ? 35 : 40;
+      const errCnt = Array.isArray(grammarDiag.errors) ? grammarDiag.errors.length : (grammarDiag.errorCount || 0);
+      const computedGrammarPenalty = grammarDiag.hasVerb === false
+        ? maxGrammarPts
+        : Math.min(maxGrammarPts, typeof grammarDiag.penaltyPoints === 'number' && grammarDiag.penaltyPoints > 0 ? grammarDiag.penaltyPoints : errCnt * 15);
+      const computedGrammarScore = Math.max(0, maxGrammarPts - computedGrammarPenalty);
+      grammarDiag.penaltyPoints = computedGrammarPenalty;
+      grammarDiag.grammarScore = computedGrammarScore;
+
+      renderGrammarDiagnosisUI(grammarDiag, sourceText, Boolean(rec.aiGrammarCacheText === sourceText && rec.aiGrammarResult));
+
+      if (!isManual && getActiveApiKey() && sourceText.length >= 4 && rec.aiGrammarCacheText !== sourceText) {
+        requestAiGrammarCorrectionIfVerified(sourceText).then(() => {
+          evaluateTranscriptAndScore(true);
+        });
+      }
+
+      const p1FeedbackBox = document.getElementById('part1FeedbackDetails');
+      if (currentPart === 1) {
+        if (p1FeedbackBox) p1FeedbackBox.classList.remove('hidden');
+        analyzePart1ReadingAccuracy(sourceText);
+      } else {
+        if (p1FeedbackBox) p1FeedbackBox.classList.add('hidden');
+      }
+
+      const p3FeedbackBox = document.getElementById('part3FeedbackDetails');
+      let p3EvalResult = null;
+      if (currentPart === 3) {
+        part3UserTranscripts[currentQuestionIndex] = sourceText;
+        if (p3FeedbackBox) p3FeedbackBox.classList.remove('hidden');
+        p3EvalResult = analyzePart3CriteriaAndConsistency(sourceText, words, fillerCount, idealTargetWords);
+      } else {
+        if (p3FeedbackBox) p3FeedbackBox.classList.add('hidden');
+      }
+
+      // ① 발성 · 발음 (30점)
+      let volumeScore = 12;
+      if (calibrationVolumeSamples.length > 0) {
+        const avgVol = calibrationVolumeSamples.reduce((a, b) => a + b, 0) / calibrationVolumeSamples.length;
+        if (avgVol >= 42) volumeScore = 15;
+        else if (avgVol >= 28) volumeScore = 12;
+        else if (avgVol >= 18) volumeScore = 8;
+        else volumeScore = 4;
+      } else if (words === 0) {
+        volumeScore = 0;
+      }
+
+      let pronClarityScore = 12;
+      if (calibrationConfidenceSamples.length > 0) {
+        const avgConf = calibrationConfidenceSamples.reduce((a, b) => a + b, 0) / calibrationConfidenceSamples.length;
+        if (avgConf >= 0.88) pronClarityScore = 15;
+        else if (avgConf >= 0.75) pronClarityScore = 12;
+        else if (avgConf >= 0.60) pronClarityScore = 8;
+        else pronClarityScore = 5;
+      } else if (words === 0) {
+        pronClarityScore = 0;
+      }
+      const score1VocalPron = words === 0 ? 0 : (volumeScore + pronClarityScore);
+
+      // ② 단어 수 (25점)
+      const wordRatio = Math.min(1, words / idealTargetWords);
+      const score2WordCount = Math.round(wordRatio * 25);
+
+      // ③ 유창성 · 중간 침묵 (35점)
+      let wpmScore = 0;
+      if (words === 0) wpmScore = 0;
+      else if (wpm >= 95 && wpm <= 150) wpmScore = 15;
+      else if ((wpm >= 75 && wpm < 95) || (wpm > 150 && wpm <= 170)) wpmScore = 11;
+      else if (wpm >= 55 && wpm < 75) wpmScore = 7;
+      else wpmScore = 3;
+
+      const midPausePenalty = calibrationMidPauseCount * 10;
+      const pauseScore = words === 0 ? 0 : Math.max(0, 12 - midPausePenalty);
+
+      let fillerScore = 8;
+      if (words === 0) fillerScore = 0;
+      else if (fillerCount === 0) fillerScore = 8;
+      else if (fillerCount <= 2) fillerScore = 5;
+      else fillerScore = 1;
+
+      const score3Fluency = wpmScore + pauseScore + fillerScore;
+
+      // ④ 어휘 다양성 · 구문 수준 (Part 2는 25점, 타 파트는 30점)
+      const maxVocabPts = currentPart === 2 ? 25 : 30;
+      const vocabEval = analyzeVocabularyDiversity(sourceText, maxVocabPts);
+      const score4Vocab = vocabEval.score;
+
+      // ⑤ 문법 정확성 (Part 2는 35점, 타 파트는 40점)
+      const score5Grammar = computedGrammarScore;
+
+      // ⑥ 파트별 핵심 정답 · 팩트체크 (Part 2는 50점, 타 파트는 40점)
+      const maxTaskPts = currentPart === 2 ? 50 : 40;
+      let score6Task = 0;
+      let taskFeedbackHtmlList = [];
+
+      if (currentPart === 1) {
+        const acc = window.lastP1Accuracy || 0;
+        const missedCnt = window.lastP1MissedCount || 0;
+        const missedPenalty = missedCnt * 1; // 누락/발음 불인식 단어 1개당 -1점 감점
+        const baseP1Task = Math.round((acc / 100) * 40);
+        score6Task = Math.max(0, baseP1Task - missedPenalty);
+        taskFeedbackHtmlList.push(
+          missedCnt > 0
+            ? `📖 <b>Part 1 지문 원문 일치율 (${acc}%):</b> 기본 ${baseP1Task}점 - 누락/불인식 단어 ${missedCnt}개 감점(-${missedPenalty}점, 개당 -1점) = <b>${score6Task}점 / 40점</b>`
+            : `📖 <b>Part 1 지문 원문 일치율 (${acc}%):</b> 누락 단어 없음 (감점 0점) = <b>${score6Task}점 / 40점</b>`
+        );
+      } else if (currentPart === 2) {
+        const p2Task = evaluatePart2TaskFulfillment(sourceText);
+        score6Task = p2Task.totalTaskScore;
+        taskFeedbackHtmlList = p2Task.feedbackNotes;
+      } else if (currentPart === 3) {
+        const hasConnector = /\b(because|since|so|first|second|also|for example|when|if)\b/i.test(sourceText);
+        let p3TaskScore = 0;
+        if (words >= 8 && grammarDiag.isContextMatched !== false) p3TaskScore += 20;
+        else if (words >= 4) p3TaskScore += 10;
+        if (hasConnector) p3TaskScore += 10;
+        if (p3EvalResult && !p3EvalResult.hasContradiction) {
+          p3TaskScore += 10;
+          taskFeedbackHtmlList.push(`✅ <b>Q5↔Q6↔Q7 답변 일관성 유지 (+10점):</b> 앞뒤 문항 간 입장 모순이 없습니다.`);
+        } else if (p3EvalResult && p3EvalResult.hasContradiction) {
+          p3TaskScore = Math.max(0, p3TaskScore - 15);
+          taskFeedbackHtmlList.push(`🚨 <b>문항 간 일관성 위배 감점 (-15점):</b> ${p3EvalResult.contradictionReason}`);
+        }
+        if (p3EvalResult && p3EvalResult.currentStance === "neutral" && words > 0) {
+          p3TaskScore = Math.max(0, p3TaskScore - 10);
+          taskFeedbackHtmlList.push(`⚠️ <b>입장 표명 모호 (⚪중립 판정 -10점 감점):</b> 선호/비선호(like, prefer, enjoy 등) 입장이 명확하지 않아 -10점 감점되었습니다.`);
+        }
+        score6Task = Math.min(40, p3TaskScore);
+      } else if (currentPart === 4) {
+        const p4Task = evaluatePart4TableFactCheck(sourceText, currentQuestionIndex);
+        score6Task = p4Task.totalTaskScore;
+        taskFeedbackHtmlList = p4Task.feedbackNotes;
+      } else if (currentPart === 5) {
+        const qOpts = window.customPart5Options || PART5_ANSWER_GUIDE.options || [];
+        const lower = sourceText.toLowerCase();
+        const optWords = qOpts.join(" ").toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+        const mentionedOption = optWords.some(w => lower.includes(w)) || /\b(prefer|choose|think|believe|beneficial|effective)\b/i.test(lower);
+        const hasTwoReasons = /\b(first|second|furthermore|moreover|in addition|also)\b/i.test(lower);
+        const hasConclusion = /\b(therefore|for these reasons|in conclusion|overall|for example|for instance)\b/i.test(lower);
+
+        score6Task = (mentionedOption ? 15 : 4) + (hasTwoReasons ? 15 : 5) + (hasConclusion ? 10 : 2);
+        taskFeedbackHtmlList.push(
+          mentionedOption
+            ? `✅ <b>선택지 입장 명시 (+15점)</b>`
+            : `❌ <b>선택지 입장 불분명 (+4점 / 15점):</b> 첫 문장에서 두 선택지 중 하나를 명확히 골라주세요.`
+        );
+        taskFeedbackHtmlList.push(
+          hasTwoReasons
+            ? `✅ <b>논리적 근거 연결어 사용 (+15점)</b>`
+            : `⚠️ <b>근거 연결어 부족 (+5점 / 15점):</b> <code>First, ~ Second, ~</code>로 두 가지 이유를 구분해 주세요.`
+        );
+      }
+
+      // ① 발성·발음 + ② 단어수 + ③ 유창성·침묵 + ④ 어휘 다양성 + ⑤ 문법 정확성(AI 감점 반영) + ⑥ 파트 핵심 정답
+      // 오직 1~6번 6대 영역 점수를 모두 합친 총합이 그대로 최종 점수이자 예상 등급이 됨
+      const rawTotal200 = score1VocalPron + score2WordCount + score3Fluency + score4Vocab + score5Grammar + score6Task;
+      const finalScore = words === 0 ? 0 : Math.max(0, Math.min(200, Math.round(rawTotal200)));
+
+      let levelBadge = "";
+      let levelColor = "text-amber-400";
+      let advice = "";
+
+      if (finalScore >= 190) {
+        levelBadge = `Advanced High (${finalScore}점)`;
+        levelColor = "text-emerald-400";
+        advice = `🏆 <b>[최상위권 달성]</b> 문법·팩트체크를 모두 통과하고 <b>${finalScore}점(AH)</b>을 기록했습니다! 실전에서도 만점이 기대됩니다.`;
+      } else if (finalScore >= 175) {
+        levelBadge = `Advanced Mid (${finalScore}점)`;
+        levelColor = "text-indigo-400";
+        advice = `✨ <b>[고득점 AM 달성]</b> 문법 정확성과 파트 핵심 과업 수행이 매우 뛰어납니다. 아래 세부 감점 요인만 1개 보완하면 AH로 올라갑니다.`;
+      } else if (finalScore >= 160) {
+        levelBadge = `Advanced Low (${finalScore}점)`;
+        levelColor = "text-blue-400";
+        advice = `👍 <b>[목표 등급 AL 달성]</b> 대기업·공기업 가산점 최고 구간인 AL 등급입니다! 아래 6대 항목 채점표에서 감점된 영역을 확인해 보세요.`;
+      } else if (finalScore >= 140) {
+        levelBadge = `Intermediate High (${finalScore}점)`;
+        levelColor = "text-amber-300";
+        advice = `🌿 <b>[IH 등급 (${finalScore}점)]</b> 의사소통은 가능하나 <b>문법 오류(-${computedGrammarPenalty}점)</b> 또는 <b>복합 전치사·표 팩트 디테일</b>에서 점수가 깎였습니다.`;
+      } else if (finalScore >= 110) {
+        levelBadge = `Intermediate Mid (${finalScore}점)`;
+        levelColor = "text-amber-400";
+        advice = `⚠️ <b>[IM 등급 (${finalScore}점)]</b> 단어 수만 채우거나 단문 위주로 말하면 IM 구간(110~130점)에 머뭅니다. 아래 <b>파트 핵심 감점 사유</b>를 꼭 확인하세요!`;
+      } else if (finalScore >= 65) {
+        levelBadge = `Intermediate Low (${finalScore}점)`;
+        levelColor = "text-rose-400";
+        advice = `🚨 <b>[초보 IL 등급 (${finalScore}점)]</b> 문법 실수, 짧은 단문, 또는 핵심 필수 요소(-ing/공간전치사/표 정답) 누락으로 감점이 컸습니다.`;
+      } else {
+        levelBadge = `Novice (${finalScore}점 / 최하위 구간)`;
+        levelColor = "text-rose-500";
+        advice = `🚨 <b>[Novice 등급 (${finalScore}점)]</b> 침묵이 길었거나 동사 없는 단어 나열에 그쳤습니다. 아래 <b>[🌱 초보자 쉬운 문장 가이드]</b>의 1~3번 문장부터 소리 내어 읽어보세요!`;
+      }
+
+      const levelEl = document.getElementById('metricPredictedLevel');
+      if (levelEl) {
+        levelEl.innerText = levelBadge;
+        levelEl.className = `text-base font-black font-mono ${levelColor}`;
+      }
+
+      const adviceEl = document.getElementById('aiAdviceText');
+      if (adviceEl) adviceEl.innerHTML = advice;
+
+      renderDetailed200RubricCard({
+        finalScore,
+        rawTotal200,
+        score1VocalPron,
+        score2WordCount,
+        score3Fluency,
+        score4Vocab,
+        maxVocabPts,
+        vocabEval,
+        score5Grammar,
+        maxGrammarPts,
+        computedGrammarPenalty,
+        score6Task,
+        maxTaskPts,
+        taskFeedbackHtmlList,
+        midPauseCount: calibrationMidPauseCount,
+        midPauseLogs: calibrationMidPauseLogs,
+        trailingSilenceIgnoredSec,
+        activeSpeakingSec
+      });
+    };
+
+    /* =====================================================================
        9. INITIALIZATION
        ===================================================================== */
     window.onload = function () {
@@ -7385,5 +8428,7 @@ Return ONLY valid JSON:
       loadPart(1);
     };
   </script>
+  <!-- 외부 scoring_engine.js 파일이 같은 폴더에 있을 때도 자연스럽게 호환되도록 연결 -->
+  <script src="scoring_engine.js" onerror="console.info('내장 200점 엄격 보정 채점 엔진으로 작동 중입니다.')"></script>
 </body>
 </html>
