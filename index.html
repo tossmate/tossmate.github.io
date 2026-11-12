@@ -2229,37 +2229,71 @@
       }
 
       stopTTS();
-      const myRunId = ++currentTtsRunId;
-
+      const myRunId = currentTtsRunId;
       const cleanText = textToSpeak.replace(/[↗↘]/g, "").replace(/\s+/g, " ").trim();
-      if (elementId) {
-        const el = document.getElementById(elementId);
-        if (el) el.classList.add('tts-active');
-      }
+
+      const el = elementId ? document.getElementById(elementId) : null;
+      if (el) el.classList.add('tts-active');
 
       const finishPlayback = () => {
-        if (myRunId !== currentTtsRunId) return;
-        document.querySelectorAll('.reading-highlight').forEach(el => el.classList.remove('tts-active'));
-        if (onEndCallback) onEndCallback();
+        if (el) el.classList.remove('tts-active');
+        if (myRunId === currentTtsRunId && onEndCallback) {
+          onEndCallback();
+        }
       };
 
-      // 1 & 2순위: 프리로드된 캐시 또는 진행 중인 Gemini Neural TTS ('Aoede' 성우) 즉시 재생
-      const wavUrl = await fetchOrCreateNeuralTtsUrl(cleanText);
-      if (myRunId !== currentTtsRunId) return;
-
-      if (wavUrl) {
-        const audio = new Audio(wavUrl);
-        currentTtsAudio = audio;
-        audio.onended = finishPlayback;
-        audio.onerror = finishPlayback;
-        audio.play().catch(finishPlayback);
-        return;
+      // 1·2순위: 등록된 API 키가 있을 경우 Google Gemini Neural TTS (Aoede 성우) 우선 재생
+      if (getActiveApiKey()) {
+        try {
+          const wavUrl = await fetchOrCreateNeuralTtsUrl(cleanText);
+          if (myRunId !== currentTtsRunId) return;
+          if (wavUrl) {
+            const audio = new Audio(wavUrl);
+            currentTtsAudio = audio;
+            audio.onended = finishPlayback;
+            audio.onerror = finishPlayback;
+            await audio.play();
+            return;
+          }
+        } catch (neuralErr) {
+          console.warn("Neural TTS playback fallback:", neuralErr);
+        }
       }
 
-      // 3순위: Google Translate US English 실제 여성 성우 오디오 스트림 재생
+      // 3순위: Google Translate US English 실제 여성 성우 오디오 스트림 재생 (실패 시 4순위 브라우저 내장 영어 원어민 음성으로 즉시 전환)
       try {
         const chunks = splitTextIntoChunks(cleanText, 175);
         let idx = 0;
+
+        const playWithBrowserSpeechSynthesis = () => {
+          if (myRunId !== currentTtsRunId) return;
+          if (!('speechSynthesis' in window)) {
+            finishPlayback();
+            return;
+          }
+          try {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.95;
+            utterance.pitch = 1.0;
+
+            const voices = window.speechSynthesis.getVoices();
+            const preferredVoice =
+              voices.find(v => v.lang === 'en-US' && /Google US English|Samantha|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
+              voices.find(v => v.lang.startsWith('en-US')) ||
+              voices.find(v => v.lang.startsWith('en'));
+            if (preferredVoice) {
+              utterance.voice = preferredVoice;
+            }
+
+            utterance.onend = finishPlayback;
+            utterance.onerror = finishPlayback;
+            window.speechSynthesis.speak(utterance);
+          } catch (synthErr) {
+            finishPlayback();
+          }
+        };
 
         const playNextChunk = () => {
           if (myRunId !== currentTtsRunId) return;
@@ -2273,8 +2307,8 @@
           currentTtsAudio = audio;
           audio.playbackRate = 0.96;
           audio.onended = () => playNextChunk();
-          audio.onerror = () => finishPlayback();
-          audio.play().catch(() => finishPlayback());
+          audio.onerror = () => playWithBrowserSpeechSynthesis();
+          audio.play().catch(() => playWithBrowserSpeechSynthesis());
         };
 
         playNextChunk();
