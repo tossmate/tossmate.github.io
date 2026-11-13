@@ -1458,6 +1458,53 @@
     let recognition = null;
     let isSttActive = false;
     let liveTranscript = "";
+    let sttAccumulatedFinal = "";
+    let sttCurrentSessionFinal = "";
+    let sttRestartTimer = null;
+    let sharedTtsAudioPlayer = null;
+    let isMobileAudioUnlocked = false;
+
+    // 모바일(iOS Safari / Android Chrome) 오디오 잠금 해제 및 단일 AudioContext 재사용
+    function unlockMobileAudioAndSpeech() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          if (!audioContext || audioContext.state === 'closed') {
+            audioContext = new AudioCtx();
+          }
+          if (audioContext.state === 'suspended') {
+            audioContext.resume();
+          }
+          if (!isMobileAudioUnlocked) {
+            const buffer = audioContext.createBuffer(1, 1, 22050);
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+            if (source.start) source.start(0);
+          }
+        }
+        if (!sharedTtsAudioPlayer) {
+          sharedTtsAudioPlayer = new Audio();
+          sharedTtsAudioPlayer.playsInline = true;
+          sharedTtsAudioPlayer.setAttribute('playsinline', '');
+          sharedTtsAudioPlayer.setAttribute('webkit-playsinline', '');
+        }
+        if (!isMobileAudioUnlocked && 'speechSynthesis' in window) {
+          window.speechSynthesis.getVoices();
+          const warmUp = new SpeechSynthesisUtterance('');
+          warmUp.volume = 0;
+          warmUp.lang = 'en-US';
+          window.speechSynthesis.speak(warmUp);
+        }
+        isMobileAudioUnlocked = true;
+      } catch (e) {
+        console.warn("Mobile audio unlock warning:", e);
+      }
+    }
+
+    function isMobileBrowserEnv() {
+      return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || "");
+    }
 
     // API Key Configuration (No built-in keys; requires user's own verified Gemini API key)
     const apiKey = "";
@@ -2351,6 +2398,8 @@
       const myRunId = currentTtsRunId;
       const cleanText = textToSpeak.replace(/[↗↘]/g, "").replace(/\s+/g, " ").trim();
 
+      unlockMobileAudioAndSpeech();
+
       const el = elementId ? document.getElementById(elementId) : null;
       if (el) el.classList.add('tts-active');
 
@@ -2370,7 +2419,10 @@
           const wavUrl = await fetchOrCreateNeuralTtsUrl(cleanText);
           if (myRunId !== currentTtsRunId) return;
           if (wavUrl) {
-            const audio = new Audio(wavUrl);
+            const audio = sharedTtsAudioPlayer || new Audio();
+            audio.pause();
+            audio.src = wavUrl;
+            audio.playbackRate = 1.0;
             currentTtsAudio = audio;
             audio.onended = finishPlayback;
             audio.onerror = finishPlayback;
@@ -2382,59 +2434,64 @@
         }
       }
 
-      // 3순위: 브라우저 내장 미국 원어민 음성(speechSynthesis) 또는 Google TTS 스트림으로 문장 전체를 끊김 없이 끝까지 낭독
+      // 3순위: 브라우저 내장 미국 원어민 음성(speechSynthesis) (iOS Safari 및 모바일에서 가장 확실하게 작동)
       const playWithBrowserSpeechSynthesis = () => {
         if (myRunId !== currentTtsRunId) return;
         if (!('speechSynthesis' in window)) {
-          // 음성 엔진 미지원 환경에서도 최소 읽기 시간만큼 대기 후 다음 단계 진행
           const fallbackDelayMs = Math.max(1800, cleanText.split(/\s+/).length * 420);
           setTimeout(finishPlayback, fallbackDelayMs);
           return;
         }
         try {
           window.speechSynthesis.cancel();
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
           const utterance = new SpeechSynthesisUtterance(cleanText);
           utterance.lang = 'en-US';
           utterance.rate = 0.94;
           utterance.pitch = 1.0;
+          utterance.volume = 1.0;
 
           const voices = window.speechSynthesis.getVoices();
           const preferredVoice =
-            voices.find(v => v.lang === 'en-US' && /Google US English|Samantha|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
-            voices.find(v => v.lang.startsWith('en-US')) ||
-            voices.find(v => v.lang.startsWith('en'));
+            voices.find(v => v.lang === 'en-US' && /Samantha|Google US English|Ava|Allison|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
+            voices.find(v => v.lang && v.lang.replace('_', '-').startsWith('en-US')) ||
+            voices.find(v => v.lang && v.lang.startsWith('en'));
           if (preferredVoice) {
             utterance.voice = preferredVoice;
           }
 
-          // Chrome 긴 문장 끊김 방지용 keep-alive 타이머 + 실제 발화 시간 기반 안전 타이머
-          const estimatedMs = Math.max(1600, cleanText.split(/\s+/).length * 450);
+          // 모바일/데스크톱 긴 문장 끊김 방지용 안전 타이머 (iOS Safari는 pause/resume 호출 시 음성이 멈추므로 데스크톱 Chrome에서만 keep-alive 실행)
+          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || "") || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+          const estimatedMs = Math.max(1800, cleanText.split(/\s+/).length * 460);
           const safetyTimer = setTimeout(() => {
-            if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-              finishPlayback();
-            }
-          }, estimatedMs + 1500);
+            finishPlayback();
+          }, estimatedMs + 2200);
 
-          const resumeInterval = setInterval(() => {
-            if (myRunId !== currentTtsRunId || isFinished) {
-              clearInterval(resumeInterval);
-              return;
-            }
-            if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-              window.speechSynthesis.pause();
-              window.speechSynthesis.resume();
-            }
-          }, 5000);
+          let resumeInterval = null;
+          if (!isIOS) {
+            resumeInterval = setInterval(() => {
+              if (myRunId !== currentTtsRunId || isFinished) {
+                clearInterval(resumeInterval);
+                return;
+              }
+              if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+                window.speechSynthesis.pause();
+                window.speechSynthesis.resume();
+              }
+            }, 8000);
+          }
 
           utterance.onend = () => {
             clearTimeout(safetyTimer);
-            clearInterval(resumeInterval);
+            if (resumeInterval) clearInterval(resumeInterval);
             finishPlayback();
           };
           utterance.onerror = () => {
             clearTimeout(safetyTimer);
-            clearInterval(resumeInterval);
-            setTimeout(finishPlayback, Math.min(2500, estimatedMs));
+            if (resumeInterval) clearInterval(resumeInterval);
+            setTimeout(finishPlayback, Math.min(2000, estimatedMs));
           };
 
           window.speechSynthesis.speak(utterance);
@@ -2444,7 +2501,14 @@
         }
       };
 
-      //  짧은 안내 멘트("Begin preparing now." 등)와 긴 지문 모두 안정적으로 순서대로 재생되도록 처리
+      // iOS Safari 및 모바일 브라우저에서는 외부 translate_tts 오디오 스트림이 자동재생 차단(NotAllowedError)되므로 즉시 내장 원어민 음성으로 재생
+      const isIOSOrSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent || "") || /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+      if (isIOSOrSafari || isMobileBrowserEnv()) {
+        playWithBrowserSpeechSynthesis();
+        return;
+      }
+
+      // 데스크톱 환경에서는 Google TTS 스트림 시도 후 실패 시 즉시 브라우저 원어민 음성으로 전환
       try {
         const chunks = splitTextIntoChunks(cleanText, 160);
         let idx = 0;
@@ -2457,7 +2521,9 @@
           }
           const chunk = chunks[idx++];
           const streamUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=en-US&client=tw-ob`;
-          const audio = new Audio(streamUrl);
+          const audio = sharedTtsAudioPlayer || new Audio();
+          audio.pause();
+          audio.src = streamUrl;
           currentTtsAudio = audio;
           audio.playbackRate = 0.96;
 
@@ -2465,7 +2531,6 @@
           const handleChunkFail = () => {
             if (chunkHandled || myRunId !== currentTtsRunId) return;
             chunkHandled = true;
-            // 스트림이 차단되면 즉시 브라우저 원어민 음성으로 전환하여 현재 문장을 처음부터 끝까지 낭독
             playWithBrowserSpeechSynthesis();
           };
 
@@ -2493,12 +2558,12 @@
       if (currentTtsAudio) {
         try {
           currentTtsAudio.pause();
-          currentTtsAudio.src = "";
+          currentTtsAudio.removeAttribute('src');
         } catch (e) {}
         currentTtsAudio = null;
       }
       if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+        try { window.speechSynthesis.cancel(); } catch (e) {}
       }
       document.querySelectorAll('.reading-highlight').forEach(el => el.classList.remove('tts-active'));
     }
@@ -2520,17 +2585,24 @@
 
     function playBeep(freq = 880, duration = 350) {
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!audioContext || audioContext.state === 'closed') {
+          audioContext = new AudioCtx();
+        }
+        if (audioContext.state === 'suspended') {
+          audioContext.resume();
+        }
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, ctx.currentTime);
-        gain.gain.setValueAtTime(0.18, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration / 1000);
+        osc.frequency.setValueAtTime(freq, audioContext.currentTime);
+        gain.gain.setValueAtTime(0.18, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration / 1000);
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(audioContext.destination);
         osc.start();
-        osc.stop(ctx.currentTime + duration / 1000);
+        osc.stop(audioContext.currentTime + duration / 1000);
       } catch (e) {
         console.warn("Beep error:", e);
       }
@@ -5553,6 +5625,7 @@ Return ONLY valid JSON matching this schema:
     }
 
     function toggleEngine() {
+      unlockMobileAudioAndSpeech();
       if (engineState === 'recording' || engineState === 'listening' || engineState === 'preparing') {
         completeResponse();
       } else {
@@ -5964,12 +6037,53 @@ Return ONLY valid JSON matching this schema:
     /* =====================================================================
        5. AUDIO RECORDING & VISUALIZER ENGINE
        ===================================================================== */
+    function getSupportedRecorderMimeType() {
+      if (typeof MediaRecorder === 'undefined') return '';
+      const types = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/aac',
+        'audio/ogg;codecs=opus'
+      ];
+      for (const t of types) {
+        if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) {
+          return t;
+        }
+      }
+      return '';
+    }
+
     async function initAudioRecording() {
+      // 모바일 크롬(Android)에서는 getUserMedia와 SpeechRecognition이 동시에 마이크를 잡으면
+      // 3~5초 뒤에 음성인식(STT)이 강제 중단되므로, 모바일에서 STT 지원 시 STT 마이크에 우선권을 부여하고 가상 파형을 표시합니다.
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (isMobileBrowserEnv() && SpeechRecognition) {
+        const micText = document.getElementById('micStatusText');
+        if (micText) micText.innerText = "모바일 음성인식 마이크 집중 모드 (끊김 방지)";
+        const overlay = document.getElementById('canvasOverlayText');
+        if (overlay) overlay.classList.add('hidden');
+        drawMobileSimulatedVisualizer();
+        return;
+      }
+
       try {
         recordedChunks = [];
-        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
         
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!audioContext || audioContext.state === 'closed') {
+          audioContext = new AudioCtx();
+        }
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 64;
         const source = audioContext.createMediaStreamSource(audioStream);
@@ -5982,38 +6096,77 @@ Return ONLY valid JSON matching this schema:
 
         drawVisualizer();
 
-        mediaRecorder = new MediaRecorder(audioStream);
-        const targetPartAtStart = currentPart;
-        const targetIdxAtStart = currentQuestionIndex;
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) recordedChunks.push(e.data);
-        };
-        mediaRecorder.onstop = () => {
-          const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-          const audioUrl = URL.createObjectURL(blob);
-          const targetRec = getQuestionResponseRecord(targetPartAtStart, targetIdxAtStart);
-          targetRec.audioUrl = audioUrl;
+        if (typeof MediaRecorder !== 'undefined') {
+          const supportedMime = getSupportedRecorderMimeType();
+          mediaRecorder = supportedMime
+            ? new MediaRecorder(audioStream, { mimeType: supportedMime })
+            : new MediaRecorder(audioStream);
 
-          if (currentPart === targetPartAtStart && currentQuestionIndex === targetIdxAtStart) {
-            const player = document.getElementById('recordedAudioPlayer');
-            if (player) player.src = audioUrl;
+          const targetPartAtStart = currentPart;
+          const targetIdxAtStart = currentQuestionIndex;
+          mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+          };
+          mediaRecorder.onstop = () => {
+            const finalMime = supportedMime || (recordedChunks[0]?.type) || 'audio/mp4';
+            const ext = finalMime.includes('mp4') || finalMime.includes('aac') ? 'm4a' : 'webm';
+            const blob = new Blob(recordedChunks, { type: finalMime });
+            const audioUrl = URL.createObjectURL(blob);
+            const targetRec = getQuestionResponseRecord(targetPartAtStart, targetIdxAtStart);
+            targetRec.audioUrl = audioUrl;
 
-            const qMeta = TOS_EXAM_STRUCTURE[targetPartAtStart]?.questions?.[targetIdxAtStart];
-            const qLabel = qMeta ? qMeta.qId : `Q${targetIdxAtStart + 1}`;
-            const downloadBtn = document.getElementById('downloadRecordBtn');
-            if (downloadBtn) {
-              downloadBtn.href = audioUrl;
-              downloadBtn.download = `toss_speaking_part${targetPartAtStart}_${qLabel}_answer.webm`;
-              downloadBtn.classList.remove('opacity-40', 'pointer-events-none');
+            if (currentPart === targetPartAtStart && currentQuestionIndex === targetIdxAtStart) {
+              const player = document.getElementById('recordedAudioPlayer');
+              if (player) {
+                player.src = audioUrl;
+                player.playsInline = true;
+              }
+
+              const qMeta = TOS_EXAM_STRUCTURE[targetPartAtStart]?.questions?.[targetIdxAtStart];
+              const qLabel = qMeta ? qMeta.qId : `Q${targetIdxAtStart + 1}`;
+              const downloadBtn = document.getElementById('downloadRecordBtn');
+              if (downloadBtn) {
+                downloadBtn.href = audioUrl;
+                downloadBtn.download = `toss_speaking_part${targetPartAtStart}_${qLabel}_answer.${ext}`;
+                downloadBtn.classList.remove('opacity-40', 'pointer-events-none');
+              }
             }
-          }
-        };
-        mediaRecorder.start();
+          };
+          mediaRecorder.start(1000);
+        }
       } catch (err) {
         console.warn("Microphone access failed:", err);
         const micText = document.getElementById('micStatusText');
         if (micText) micText.innerText = "마이크 권한 필요";
       }
+    }
+
+    function drawMobileSimulatedVisualizer() {
+      const canvas = document.getElementById('visualizerCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const barCount = 32;
+
+      function render() {
+        if (engineState !== 'recording') return;
+        visualizerAnimationId = requestAnimationFrame(render);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const barWidth = (canvas.width / barCount) * 1.2;
+        let x = 0;
+        const t = Date.now() / 160;
+        for (let i = 0; i < barCount; i++) {
+          const wave = Math.abs(Math.sin(t + i * 0.45)) * 0.65 + 0.15;
+          const barHeight = wave * canvas.height;
+          ctx.fillStyle = `rgb(140, 99, 241)`;
+          ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
+          x += barWidth;
+        }
+        // 모바일 시뮬레이션 모드에서도 정상 성량 샘플 기록
+        if (typeof calibrationVolumeSamples !== 'undefined') {
+          calibrationVolumeSamples.push(45);
+        }
+      }
+      render();
     }
 
     function drawVisualizer() {
@@ -6124,8 +6277,15 @@ Return ONLY valid JSON matching this schema:
 
     function stopSpeechRecognition() {
       isSttActive = false;
+      if (sttRestartTimer) {
+        clearTimeout(sttRestartTimer);
+        sttRestartTimer = null;
+      }
       if (recognition) {
-        try { recognition.stop(); } catch (e) {}
+        try {
+          recognition.onend = null;
+          recognition.stop();
+        } catch (e) {}
       }
       const badge = document.getElementById('sttStatusBadge');
       if (badge) {
@@ -7492,6 +7652,12 @@ Return ONLY valid JSON:
 
     initSpeechRecognition = function () {
       resetCalibrationMetrics();
+      sttAccumulatedFinal = "";
+      sttCurrentSessionFinal = "";
+      if (sttRestartTimer) {
+        clearTimeout(sttRestartTimer);
+        sttRestartTimer = null;
+      }
 
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
@@ -7500,13 +7666,22 @@ Return ONLY valid JSON:
         return;
       }
 
+      if (recognition) {
+        try {
+          recognition.onend = null;
+          recognition.abort();
+        } catch (e) {}
+      }
+
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
       recognition.lang = 'en-US';
 
       recognition.onstart = () => {
         isSttActive = true;
+        sttCurrentSessionFinal = "";
         const badge = document.getElementById('sttStatusBadge');
         if (badge) {
           badge.innerText = "실시간 영어 인식 중";
@@ -7516,22 +7691,27 @@ Return ONLY valid JSON:
 
       recognition.onresult = (event) => {
         const nowMs = Date.now();
-        let finalStr = "";
+        let sessionFinalStr = "";
         let interimStr = "";
 
         for (let i = 0; i < event.results.length; ++i) {
           const res = event.results[i];
+          const chunk = (res[0] && res[0].transcript) ? res[0].transcript.trim() : "";
+          if (!chunk) continue;
           if (res.isFinal) {
-            finalStr += res[0].transcript + " ";
+            sessionFinalStr += chunk + " ";
             if (typeof res[0].confidence === 'number' && res[0].confidence > 0) {
               calibrationConfidenceSamples.push(res[0].confidence);
             }
           } else {
-            interimStr += res[0].transcript;
+            interimStr += chunk + " ";
           }
         }
 
-        const currentCombined = (finalStr + interimStr).trim();
+        sttCurrentSessionFinal = sessionFinalStr.trim();
+        const fullFinal = [sttAccumulatedFinal, sttCurrentSessionFinal].filter(Boolean).join(" ").trim();
+        const currentCombined = [fullFinal, interimStr.trim()].filter(Boolean).join(" ").trim();
+
         const prevWords = countWords(liveTranscript);
         const currentWords = countWords(currentCombined);
 
@@ -7548,10 +7728,10 @@ Return ONLY valid JSON:
           calibrationLastSpeechMs = nowMs;
         }
 
-        liveTranscript = finalStr + interimStr;
+        liveTranscript = currentCombined;
         const displayEl = document.getElementById('liveTranscriptDisplay');
         if (displayEl) {
-          displayEl.innerHTML = `<span class="text-white">${finalStr}</span><span class="text-brand-300 italic">${interimStr}</span>`;
+          displayEl.innerHTML = `<span class="text-white">${fullFinal ? fullFinal + ' ' : ''}</span><span class="text-brand-300 italic">${interimStr}</span>`;
           displayEl.scrollTop = displayEl.scrollHeight;
         }
 
@@ -7561,11 +7741,46 @@ Return ONLY valid JSON:
 
       recognition.onerror = (e) => {
         console.warn("STT Error:", e.error);
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+          isSttActive = false;
+        }
       };
 
+      // 모바일 크롬에서 3~5초 호흡 후 세션이 자동 종료(onend)되더라도
+      // 이전까지 말한 텍스트(sttAccumulatedFinal)를 안전하게 보존하고 120ms 뒤 즉시 재연결합니다!
       recognition.onend = () => {
+        if (sttCurrentSessionFinal) {
+          sttAccumulatedFinal = [sttAccumulatedFinal, sttCurrentSessionFinal].filter(Boolean).join(" ").trim();
+          sttCurrentSessionFinal = "";
+        }
         if (engineState === 'recording' && isSttActive) {
-          try { recognition.start(); } catch (err) {}
+          if (sttRestartTimer) clearTimeout(sttRestartTimer);
+          sttRestartTimer = setTimeout(() => {
+            if (engineState === 'recording' && isSttActive) {
+              try {
+                recognition.start();
+              } catch (err) {
+                try {
+                  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+                  if (SpeechRec) {
+                    const prevOnStart = recognition.onstart;
+                    const prevOnResult = recognition.onresult;
+                    const prevOnError = recognition.onerror;
+                    const prevOnEnd = recognition.onend;
+                    recognition = new SpeechRec();
+                    recognition.continuous = true;
+                    recognition.interimResults = true;
+                    recognition.lang = 'en-US';
+                    recognition.onstart = prevOnStart;
+                    recognition.onresult = prevOnResult;
+                    recognition.onerror = prevOnError;
+                    recognition.onend = prevOnEnd;
+                    recognition.start();
+                  }
+                } catch (e2) {}
+              }
+            }
+          }, 120);
         }
       };
 
@@ -8422,6 +8637,12 @@ Return ONLY valid JSON:
     window.onload = function () {
       updateApiKeyStatusUI();
       loadPart(1);
+      // 모바일/사파리에서 화면 어디든 첫 터치 시 오디오 및 원어민 음성 합성기 잠금 즉시 해제
+      const unlockOnce = () => {
+        unlockMobileAudioAndSpeech();
+      };
+      document.addEventListener('touchstart', unlockOnce, { passive: true, once: true });
+      document.addEventListener('click', unlockOnce, { passive: true, once: true });
     };
   </script>
   <!-- 외부 scoring_engine.js 파일이 같은 폴더에 있을 때도 자연스럽게 호환되도록 연결 -->
