@@ -2368,105 +2368,51 @@
         }
       }
 
-      // 3순위: 브라우저 내장 미국 원어민 음성(speechSynthesis) 또는 Google TTS 스트림으로 문장 전체를 끊김 없이 끝까지 낭독
-      const playWithBrowserSpeechSynthesis = () => {
-        if (myRunId !== currentTtsRunId) return;
-        if (!('speechSynthesis' in window)) {
-          const fallbackDelayMs = Math.max(1800, cleanText.split(/\s+/).length * 420);
-          setTimeout(finishPlayback, fallbackDelayMs);
-          return;
-        }
-        try {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(cleanText);
-          utterance.lang = 'en-US';
-          utterance.rate = 0.94;
-          utterance.pitch = 1.0;
-
-          const voices = window.speechSynthesis.getVoices();
-          const preferredVoice =
-            voices.find(v => v.lang === 'en-US' && /Google US English|Samantha|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
-            voices.find(v => v.lang.startsWith('en-US')) ||
-            voices.find(v => v.lang.startsWith('en'));
-          if (preferredVoice) {
-            utterance.voice = preferredVoice;
-          }
-
-          const estimatedMs = Math.max(1600, cleanText.split(/\s+/).length * 450);
-          const safetyTimer = setTimeout(() => {
-            if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-              finishPlayback();
-            }
-          }, estimatedMs + 1500);
-
-          const resumeInterval = setInterval(() => {
-            if (myRunId !== currentTtsRunId || isFinished) {
-              clearInterval(resumeInterval);
-              return;
-            }
-            if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-              window.speechSynthesis.pause();
-              window.speechSynthesis.resume();
-            }
-          }, 5000);
-
-          utterance.onend = () => {
-            clearTimeout(safetyTimer);
-            clearInterval(resumeInterval);
-            finishPlayback();
-          };
-          utterance.onerror = () => {
-            clearTimeout(safetyTimer);
-            clearInterval(resumeInterval);
-            setTimeout(finishPlayback, Math.min(2500, estimatedMs));
-          };
-
-          window.speechSynthesis.speak(utterance);
-        } catch (synthErr) {
-          const fallbackDelayMs = Math.max(1800, cleanText.split(/\s+/).length * 420);
-          setTimeout(finishPlayback, fallbackDelayMs);
-        }
-      };
-
+      // 2순위: 고품질 클라우드 Neural 성우 오디오 스트림 (기계음 직행 폐기 + 프리버퍼링으로 앞/뒤 끊김 완벽 방지)
       try {
-        const chunks = splitTextIntoChunks(cleanText, 160);
-        let idx = 0;
+        const chunks = splitTextIntoChunks(cleanText, 165);
+        // 모든 문장 청크를 미리 Audio 객체로 프리로드하여 처음 버벅거림과 중간 끊김을 방지
+        const preloadedAudios = chunks.map(chunk => {
+          const streamUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=en-US&client=tw-ob`;
+          const a = new Audio();
+          a.referrerPolicy = "no-referrer";
+          a.preload = "auto";
+          a.src = streamUrl;
+          a.playbackRate = 0.96;
+          a.load();
+          return a;
+        });
 
+        let idx = 0;
         const playNextChunk = () => {
-          if (myRunId !== currentTtsRunId) return;
-          if (idx >= chunks.length) {
+          if (myRunId !== currentTtsRunId || isFinished) return;
+          if (idx >= preloadedAudios.length) {
             finishPlayback();
             return;
           }
-          const chunk = chunks[idx++];
-          const streamUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=en-US&client=tw-ob`;
-          const audio = new Audio(streamUrl);
+
+          const audio = preloadedAudios[idx++];
           currentTtsAudio = audio;
-          audio.playbackRate = 0.96;
 
-          let chunkHandled = false;
-          const handleChunkFail = () => {
-            if (chunkHandled || myRunId !== currentTtsRunId) return;
-            chunkHandled = true;
-            playWithBrowserSpeechSynthesis();
-          };
-
-          audio.onended = () => {
-            if (chunkHandled || myRunId !== currentTtsRunId) return;
-            chunkHandled = true;
+          let chunkDone = false;
+          const proceedNext = () => {
+            if (chunkDone || myRunId !== currentTtsRunId) return;
+            chunkDone = true;
             playNextChunk();
           };
-          audio.onerror = handleChunkFail;
+
+          audio.onended = proceedNext;
+          audio.onerror = proceedNext;
 
           const playPromise = audio.play();
           if (playPromise && typeof playPromise.catch === 'function') {
-            playPromise.catch(handleChunkFail);
+            playPromise.catch(proceedNext);
           }
         };
 
         playNextChunk();
       } catch (e) {
-        playWithBrowserSpeechSynthesis();
+        finishPlayback();
       }
     }
 
@@ -6306,14 +6252,42 @@ Return ONLY valid JSON matching this schema:
       }
 
       const contextStr = getCurrentQuestionPromptContext();
-      const prompt = `You are an official ETS TOEIC Speaking rater and English grammar coach.
-Question/Context: ${contextStr}
-Student's Spoken Answer: "${sourceText}"
+      const maxVocabPts = currentPart === 2 ? 25 : 30;
+      const maxGrammarPts = currentPart === 2 ? 35 : 40;
+      const maxTaskPts = currentPart === 2 ? 50 : 40;
 
-Analyze whether the student's answer is grammatically correct and relevant to the prompt.
-Return ONLY valid JSON:
+      const avgVol = (typeof calibrationVolumeSamples !== 'undefined' && calibrationVolumeSamples.length > 0)
+        ? Math.round(calibrationVolumeSamples.reduce((a, b) => a + b, 0) / calibrationVolumeSamples.length)
+        : 35;
+      const avgConf = (typeof calibrationConfidenceSamples !== 'undefined' && calibrationConfidenceSamples.length > 0)
+        ? Number((calibrationConfidenceSamples.reduce((a, b) => a + b, 0) / calibrationConfidenceSamples.length).toFixed(2))
+        : 0.82;
+      const midPauses = typeof calibrationMidPauseCount !== 'undefined' ? calibrationMidPauseCount : 0;
+
+      const prompt = `You are an official ETS TOEIC Speaking rater and English speaking coach.
+Question/Context (Part ${currentPart}): ${contextStr}
+Student's Spoken Answer (from STT): "${sourceText}"
+Audio Metrics: Mic Volume=${avgVol}/100, STT Confidence=${avgConf}, Mid-speech 3s+ Pauses=${midPauses}, Recording Duration=${totalRecordingSeconds}s.
+
+Evaluate ALL 6 TOEIC Speaking areas strictly and honestly. Look for STT misrecognitions caused by unclear pronunciation, broken syntax, awkward phrasing, vocabulary repetition, fluency/pacing, and task fulfillment.
+Return ONLY valid JSON matching this exact schema:
 {
-  "aiTotalScore": 150,
+  "aiScores": {
+    "vocalPron": 25,
+    "fluency": 30,
+    "vocab": 22,
+    "grammar": 25,
+    "task": 32
+  },
+  "areaFeedback": {
+    "vocalPronGood": "발성·발음에서 명확하게 잘 들린 부분 (한국어)",
+    "vocalPronBad": "발음이 뭉개져 STT가 이상한 단어로 오인식했거나 강세가 어색한 부분과 교정 팁 (한국어)",
+    "fluencyGood": "속도, 호흡, 연결어 흐름에서 좋았던 점 (한국어)",
+    "fluencyBad": "중간 멈칫거림, 문장 끊김, 필러 등 유창성에서 어색했던 부분 (한국어)",
+    "vocabGood": "문맥에 맞게 잘 사용한 어휘나 표현 (한국어)",
+    "vocabBad": "단어 반복이나 어색한 어휘 선택 및 추천 대체 어휘 (한국어)",
+    "taskComment": "질문 의도 부합 여부 및 파트 핵심 감점/득점 요인 한줄평 (한국어)"
+  },
   "errorCount": 0,
   "penaltyPoints": 0,
   "isContextMatched": true,
@@ -6325,18 +6299,31 @@ Return ONLY valid JSON:
       "reason": "Korean explanation of why this is wrong in TOEIC Speaking grammar/context"
     }
   ]
-}`;
+}
+Constraints for aiScores:
+- vocalPron: 0 to 30
+- fluency: 0 to 35
+- vocab: 0 to ${maxVocabPts}
+- grammar: 0 to ${maxGrammarPts} (deduct 15 pts per grammar/syntax error)
+- task: 0 to ${maxTaskPts}`;
 
       try {
         const aiRes = await fetchGeminiTextJson(prompt);
         if (aiRes && typeof aiRes.errorCount === 'number') {
-          const maxGrammarPts = currentPart === 2 ? 35 : 40;
           const errCnt = Array.isArray(aiRes.errors) ? aiRes.errors.length : (aiRes.errorCount || 0);
           aiRes.errorCount = errCnt;
           aiRes.penaltyPoints = Math.min(maxGrammarPts, errCnt * 15);
           aiRes.grammarScore = Math.max(0, maxGrammarPts - aiRes.penaltyPoints);
           aiRes.maxGrammarPoints = maxGrammarPts;
           aiRes.hasVerb = true;
+
+          if (aiRes.aiScores) {
+            aiRes.aiScores.vocalPron = Math.max(0, Math.min(30, Number(aiRes.aiScores.vocalPron) || 0));
+            aiRes.aiScores.fluency = Math.max(0, Math.min(35, Number(aiRes.aiScores.fluency) || 0));
+            aiRes.aiScores.vocab = Math.max(0, Math.min(maxVocabPts, Number(aiRes.aiScores.vocab) || 0));
+            aiRes.aiScores.grammar = aiRes.grammarScore;
+            aiRes.aiScores.task = Math.max(0, Math.min(maxTaskPts, Number(aiRes.aiScores.task) || 0));
+          }
 
           rec.aiGrammarCacheText = sourceText.trim();
           rec.aiGrammarResult = aiRes;
@@ -6359,35 +6346,70 @@ Return ONLY valid JSON:
       if (errCount === 0 && originalText.trim().length > 0) {
         badgeEl.innerText = "문법 감점: 0점 (정확함)";
         badgeEl.className = "px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono text-[11px] font-bold";
-        summaryEl.innerHTML = `<span class="text-emerald-300 font-bold">✅ 문법 및 문장 구조가 정확합니다!</span> ${isAiPowered ? "(Google AI 3.1 정밀 검증 완료)" : "(기본 문법·문맥 검증 통과)"} 감점 없이 발화량과 유창성 점수가 온전히 반영되었습니다.`;
-        listEl.innerHTML = "";
+        summaryEl.innerHTML = isAiPowered
+          ? `<span class="text-emerald-300 font-bold">✅ 문법 및 문장 구조가 정확합니다!</span> (Google AI 3.1 전 영역 정밀 분석 완료) 감점 없이 발화량과 유창성 점수가 온전히 반영되었습니다.`
+          : `<span class="text-emerald-300 font-bold">지금 [Google AI 무료 재채점]을 누르고 Gemini 3.1의 심층 피드백을 확인해 보세요!</span>`;
       } else {
         badgeEl.innerText = `문법·완성도 감점: -${penalty}점 (${errCount}건 감지)`;
         badgeEl.className = "px-2 py-0.5 rounded bg-rose-500/25 border border-rose-400/50 text-rose-200 font-mono text-[11px] font-bold";
         summaryEl.innerHTML = `<span class="text-rose-300 font-bold">⚠️ 총 ${errCount}개의 문법/문장 오류가 감지되어 예상 등급에서 -${penalty}점 감점 반영되었습니다.</span> 아래 수정 포인트를 고친 뒤 <b>[구글 ai 전용 재채점 실행]</b>을 누르면 점수가 즉시 회복됩니다!`;
-
-        const itemsHtml = (diag.errors || []).map((err, idx) => `
-          <div class="p-2.5 rounded-lg bg-slate-950/90 border border-rose-500/25 space-y-1">
-            <div class="flex items-center justify-between flex-wrap gap-1">
-              <span class="text-rose-300 font-bold">❌ 틀린 표현 ${idx + 1}: <span class="line-through text-rose-400 font-mono">${err.wrong}</span></span>
-              <span class="text-emerald-300 font-bold">✅ 올바른 교정: <span class="font-mono underline decoration-emerald-400/60">${err.fix}</span></span>
-            </div>
-            <div class="text-slate-300 leading-relaxed">${err.reason}</div>
-          </div>
-        `).join('');
-
-        const fullFixHtml = (diag.correctedFull && diag.correctedFull.trim() !== originalText.trim())
-          ? `<div class="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 cursor-pointer hover:border-emerald-400 transition" onclick="speakSentence(null, '${diag.correctedFull.replace(/'/g, "\\'")}')">
-              <div class="flex items-center justify-between text-emerald-300 font-bold mb-0.5">
-                <span>✨ 문법 교정 완성본 (클릭 시 원어민 발음 듣기)</span>
-                <span class="text-[10px] text-slate-400"><i class="fa-solid fa-volume-high mr-1"></i>듣기</span>
-              </div>
-              <div class="text-white font-medium">${diag.correctedFull}</div>
-            </div>`
-          : "";
-
-        listEl.innerHTML = itemsHtml + fullFixHtml;
       }
+
+      const itemsHtml = (diag.errors || []).map((err, idx) => `
+        <div class="p-2.5 rounded-lg bg-slate-950/90 border border-rose-500/25 space-y-1">
+          <div class="flex items-center justify-between flex-wrap gap-1">
+            <span class="text-rose-300 font-bold">❌ 틀린 표현 ${idx + 1}: <span class="line-through text-rose-400 font-mono">${err.wrong}</span></span>
+            <span class="text-emerald-300 font-bold">✅ 올바른 교정: <span class="font-mono underline decoration-emerald-400/60">${err.fix}</span></span>
+          </div>
+          <div class="text-slate-300 leading-relaxed">${err.reason}</div>
+        </div>
+      `).join('');
+
+      const af = diag.areaFeedback;
+      const aiMultiAreaHtml = (isAiPowered && af) ? `
+        <div class="mt-2 pt-2.5 border-t border-white/10 space-y-2">
+          <div class="font-extrabold text-amber-300 text-[11px] flex items-center justify-between">
+            <span class="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 font-black">[구글 AI 3.1 전 영역 심층 진단] 어디가 좋고 어디가 아쉬웠을까?</span>
+            <span class="text-[10px] text-emerald-300 font-mono font-bold">AI 재산출 점수표 자동 반영됨</span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+            <div class="p-2.5 rounded-lg bg-slate-950/90 border border-white/10 space-y-1.5">
+              <div>
+                <span class="inline-block px-2 py-0.5 rounded bg-sky-500/25 border border-sky-400/40 text-sky-200 font-black">발성 · 발음 (STT 인식 진단)</span>
+              </div>
+              <div class="text-emerald-300 leading-relaxed"><span class="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 font-black mr-1">좋은 점</span>${af.vocalPronGood || "전반적인 발성 에너지가 안정적입니다."}</div>
+              <div class="text-rose-300 leading-relaxed"><span class="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-400/30 text-rose-200 font-black mr-1">아쉬운 점</span>${af.vocalPronBad || "특별히 뭉개진 발음 없이 양호합니다."}</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-slate-950/90 border border-white/10 space-y-1.5">
+              <div>
+                <span class="inline-block px-2 py-0.5 rounded bg-amber-500/25 border border-amber-400/40 text-amber-200 font-black">유창성 · 호흡 흐름</span>
+              </div>
+              <div class="text-emerald-300 leading-relaxed"><span class="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 font-black mr-1">좋은 점</span>${af.fluencyGood || "문장 이어 말하기 속도가 자연스럽습니다."}</div>
+              <div class="text-rose-300 leading-relaxed"><span class="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-400/30 text-rose-200 font-black mr-1">아쉬운 점</span>${af.fluencyBad || "불필요한 끊김 없이 매끄럽습니다."}</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-slate-950/90 border border-white/10 space-y-1.5">
+              <div>
+                <span class="inline-block px-2 py-0.5 rounded bg-purple-500/25 border border-purple-400/40 text-purple-200 font-black">어휘 다양성 · 표현력</span>
+              </div>
+              <div class="text-emerald-300 leading-relaxed"><span class="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 font-black mr-1">좋은 점</span>${af.vocabGood || "주제에 맞는 핵심 어휘를 사용했습니다."}</div>
+              <div class="text-rose-300 leading-relaxed"><span class="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-400/30 text-rose-200 font-black mr-1">아쉬운 점</span>${af.vocabBad || "어휘 반복 없이 적절히 구사했습니다."}</div>
+            </div>
+          </div>
+          ${af.taskComment ? `<div class="p-2 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-indigo-200 text-[11px]"><span class="px-1.5 py-0.5 rounded bg-indigo-500/25 border border-indigo-400/40 text-indigo-200 font-black mr-1.5">AI 파트 과업 총평</span>${af.taskComment}</div>` : ''}
+        </div>
+      ` : '';
+
+      const fullFixHtml = (diag.correctedFull && diag.correctedFull.trim() !== originalText.trim())
+        ? `<div class="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 cursor-pointer hover:border-emerald-400 transition" onclick="speakSentence(null, '${diag.correctedFull.replace(/'/g, "\\'")}')">
+            <div class="flex items-center justify-between text-emerald-300 font-bold mb-0.5">
+              <span>✨ 문법 교정 완성본 (클릭 시 원어민 발음 듣기)</span>
+              <span class="text-[10px] text-slate-400"><i class="fa-solid fa-volume-high mr-1"></i>듣기</span>
+            </div>
+            <div class="text-white font-medium">${diag.correctedFull}</div>
+          </div>`
+        : "";
+
+      listEl.innerHTML = itemsHtml + aiMultiAreaHtml + fullFixHtml;
     }
 
     let manualRescoreCooldown = 0;
@@ -8460,9 +8482,28 @@ Return ONLY valid JSON:
         );
       }
 
+      // Google AI 재채점 결과가 캐시에 존재하면 발성·발음, 유창성, 어휘 다양성, 문법, 파트 과업 점수를 AI 정밀 분석 점수로 동기화
+      let finalScore1VocalPron = score1VocalPron;
+      let finalScore3Fluency = score3Fluency;
+      let finalScore4Vocab = score4Vocab;
+      let finalScore5Grammar = score5Grammar;
+      let finalScore6Task = score6Task;
+
+      if (rec.aiGrammarCacheText === sourceText && rec.aiGrammarResult && rec.aiGrammarResult.aiScores && words > 0) {
+        const ais = rec.aiGrammarResult.aiScores;
+        if (typeof ais.vocalPron === 'number') finalScore1VocalPron = Math.max(0, Math.min(30, Math.round(ais.vocalPron)));
+        if (typeof ais.fluency === 'number') finalScore3Fluency = Math.max(0, Math.min(35, Math.round(ais.fluency)));
+        if (typeof ais.vocab === 'number') finalScore4Vocab = Math.max(0, Math.min(maxVocabPts, Math.round(ais.vocab)));
+        if (typeof ais.grammar === 'number') finalScore5Grammar = Math.max(0, Math.min(maxGrammarPts, Math.round(ais.grammar)));
+        if (typeof ais.task === 'number') finalScore6Task = Math.max(0, Math.min(maxTaskPts, Math.round(ais.task)));
+        if (rec.aiGrammarResult.areaFeedback && rec.aiGrammarResult.areaFeedback.taskComment) {
+          taskFeedbackHtmlList.unshift(`<span class="px-1.5 py-0.5 rounded bg-indigo-500/25 border border-indigo-400/40 text-indigo-200 font-black mr-1">[구글 AI 과업·맥락 정밀 분석]</span> ${rec.aiGrammarResult.areaFeedback.taskComment}`);
+        }
+      }
+
       // ① 발성·발음 + ② 단어수 + ③ 유창성·침묵 + ④ 어휘 다양성 + ⑤ 문법 정확성(AI 감점 반영) + ⑥ 파트 핵심 정답
       // 오직 1~6번 6대 영역 점수를 모두 합친 총합이 그대로 최종 점수이자 예상 등급이 됨
-      const rawTotal200 = score1VocalPron + score2WordCount + score3Fluency + score4Vocab + score5Grammar + score6Task;
+      const rawTotal200 = finalScore1VocalPron + score2WordCount + finalScore3Fluency + finalScore4Vocab + finalScore5Grammar + finalScore6Task;
       const finalScore = words === 0 ? 0 : Math.max(0, Math.min(200, Math.round(rawTotal200)));
 
       let levelBadge = "";
@@ -8511,16 +8552,16 @@ Return ONLY valid JSON:
       renderDetailed200RubricCard({
         finalScore,
         rawTotal200,
-        score1VocalPron,
+        score1VocalPron: finalScore1VocalPron,
         score2WordCount,
-        score3Fluency,
-        score4Vocab,
+        score3Fluency: finalScore3Fluency,
+        score4Vocab: finalScore4Vocab,
         maxVocabPts,
         vocabEval,
-        score5Grammar,
+        score5Grammar: finalScore5Grammar,
         maxGrammarPts,
         computedGrammarPenalty,
-        score6Task,
+        score6Task: finalScore6Task,
         maxTaskPts,
         taskFeedbackHtmlList,
         midPauseCount: calibrationMidPauseCount,
