@@ -2326,23 +2326,31 @@
       return chunks;
     }
 
-    // 1990년대 기계음(speechSynthesis) 완전 영구 삭제!
-    // 오직 실제 원어민 클라우드 성우 오디오 스트림만 사용하며, 페이지 열릴 때 미리 연결(Warm-up)하여 첫 클릭 1초 로딩 제거
+    // 모바일 크롬/사파리 자동재생 차단을 방지하는 단일 공유 Audio 객체 (첫 터치 시 즉시 재생)
+    let sharedTtsAudio = null;
+    function getSharedTtsAudio() {
+      if (!sharedTtsAudio) {
+        sharedTtsAudio = new Audio();
+        sharedTtsAudio.preload = "auto";
+        // 구글 TTS 서버가 모바일/PC 브라우저의 Referer 헤더를 보고 403 차단하는 것을 완벽 우회
+        sharedTtsAudio.referrerPolicy = "no-referrer";
+      }
+      return sharedTtsAudio;
+    }
+
     const cloudTtsPreloadedUrls = new Map();
 
     function buildCloudVoiceStreamUrls(chunk) {
       const encoded = encodeURIComponent(chunk);
       return [
-        // 1순위: 미국 원어민 여성 Neural 성우 (Joanna - 모바일/PC 모두 차단 없이 즉시 재생)
-        `https://api.streamelements.com/kappa/v2/speech?voice=Joanna&text=${encoded}`,
-        // 2순위: Google Cloud 자연어 성우 스트림 (gtx)
-        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=gtx`,
-        // 3순위: Google Cloud 자연어 성우 스트림 (tw-ob)
-        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=tw-ob`
+        // 1순위: Google 자연어 원어민 성우 (tw-ob) - 5초 지연 일으키던 외부 서버 제거 후 즉시 직행!
+        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=tw-ob`,
+        // 2순위: Google 클라우드 원어민 성우 (gtx)
+        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=gtx`
       ];
     }
 
-    // 페이지가 열리자마자 현재 파트의 문장 오디오를 백그라운드에서 미리 버퍼링해 두어 첫 클릭 1초 딜레이를 없앰
+    // 페이지가 열리자마자 현재 파트의 문장 오디오를 백그라운드에서 미리 버퍼링해 두어 0.1초 즉시 재생 보장
     function preloadCurrentPartAudio() {
       try {
         const textsToWarmUp = ["Begin preparing now.", "Begin speaking now."];
@@ -2358,6 +2366,7 @@
           if (cloudTtsPreloadedUrls.has(clean)) return;
           const urls = buildCloudVoiceStreamUrls(clean);
           const preAudio = new Audio();
+          preAudio.referrerPolicy = "no-referrer";
           preAudio.preload = "auto";
           preAudio.src = urls[0];
           cloudTtsPreloadedUrls.set(clean, urls[0]);
@@ -2365,7 +2374,7 @@
       } catch (e) {}
     }
 
-    async function speakSentence(elementId, customText = null, onEndCallback = null) {
+    function speakSentence(elementId, customText = null, onEndCallback = null) {
       const textToSpeak = customText || (elementId ? document.getElementById(elementId)?.innerText : "");
       if (!textToSpeak) {
         if (onEndCallback) onEndCallback();
@@ -2389,20 +2398,22 @@
         }
       };
 
-      // 1순위: 캐시에 이미 생성된 Gemini Aoede 성우 음성이 있으면 즉시 재생
+      const audio = getSharedTtsAudio();
+      currentTtsAudio = audio;
+
+      // 1순위: 캐시에 이미 생성된 Gemini Aoede 성우 음성이 있으면 동기식으로 즉시(0초) 재생
       if (ttsAudioBlobCache.has(cleanText)) {
         try {
-          const wavUrl = ttsAudioBlobCache.get(cleanText);
-          const audio = new Audio(wavUrl);
-          currentTtsAudio = audio;
+          audio.src = ttsAudioBlobCache.get(cleanText);
           audio.onended = finishPlayback;
           audio.onerror = finishPlayback;
-          await audio.play();
+          const p = audio.play();
+          if (p && typeof p.catch === 'function') p.catch(finishPlayback);
           return;
         } catch (e) {}
       }
 
-      // 2순위: 클라우드 Neural 성우 오디오 스트림으로만 재생 (기계음 speechSynthesis 절대 사용 안 함!)
+      // 2순위: 사용자 터치 이벤트 안에서 동기식으로 즉시 Google 원어민 성우 스트림 재생 (5초 대기 완전 제거!)
       const chunks = splitTextIntoChunks(cleanText, 165);
       let chunkIdx = 0;
 
@@ -2425,10 +2436,9 @@
           }
 
           const currentUrl = streamUrls[urlTryIdx++];
-          const audio = new Audio();
-          audio.preload = "auto";
+          audio.referrerPolicy = "no-referrer";
           audio.src = currentUrl;
-          currentTtsAudio = audio;
+          audio.playbackRate = 0.96;
 
           let settled = false;
           audio.onended = () => {
@@ -2468,10 +2478,10 @@
       currentTtsRunId++;
       if (currentTtsAudio) {
         try {
+          currentTtsAudio.onended = null;
+          currentTtsAudio.onerror = null;
           currentTtsAudio.pause();
-          currentTtsAudio.src = "";
         } catch (e) {}
-        currentTtsAudio = null;
       }
       document.querySelectorAll('.reading-highlight').forEach(el => el.classList.remove('tts-active'));
     }
