@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
   <title>토스메이트 - 무료 토익스피킹 실전 스터디 플랫폼</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -2326,52 +2327,22 @@
       return chunks;
     }
 
-    // 모바일 크롬/사파리 자동재생 차단을 방지하는 단일 공유 Audio 객체 (첫 터치 시 즉시 재생)
+    // 모바일/PC 공용 단일 오디오 엘리먼트 (DOM에 직접 부착 + no-referrer 완벽 보장)
     let sharedTtsAudio = null;
     function getSharedTtsAudio() {
       if (!sharedTtsAudio) {
-        sharedTtsAudio = new Audio();
-        sharedTtsAudio.preload = "auto";
-        // 구글 TTS 서버가 모바일/PC 브라우저의 Referer 헤더를 보고 403 차단하는 것을 완벽 우회
-        sharedTtsAudio.referrerPolicy = "no-referrer";
+        sharedTtsAudio = document.createElement('audio');
+        sharedTtsAudio.setAttribute('playsinline', '');
+        sharedTtsAudio.setAttribute('webkit-playsinline', '');
+        sharedTtsAudio.preload = 'auto';
+        sharedTtsAudio.style.display = 'none';
+        document.body.appendChild(sharedTtsAudio);
       }
       return sharedTtsAudio;
     }
 
-    const cloudTtsPreloadedUrls = new Map();
-
-    function buildCloudVoiceStreamUrls(chunk) {
-      const encoded = encodeURIComponent(chunk);
-      return [
-        // 1순위: Google 자연어 원어민 성우 (tw-ob) - 5초 지연 일으키던 외부 서버 제거 후 즉시 직행!
-        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=tw-ob`,
-        // 2순위: Google 클라우드 원어민 성우 (gtx)
-        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=gtx`
-      ];
-    }
-
-    // 페이지가 열리자마자 현재 파트의 문장 오디오를 백그라운드에서 미리 버퍼링해 두어 0.1초 즉시 재생 보장
     function preloadCurrentPartAudio() {
-      try {
-        const textsToWarmUp = ["Begin preparing now.", "Begin speaking now."];
-        if (currentPart === 1) {
-          const qData = PART1_QUESTIONS_DATA[currentQuestionIndex] || PART1_QUESTIONS_DATA[0];
-          if (qData) {
-            textsToWarmUp.push(qData.sentence1, qData.sentence2, qData.sentence3, qData.sentence4);
-          }
-        }
-        textsToWarmUp.forEach(txt => {
-          if (!txt) return;
-          const clean = txt.replace(/[↗↘]/g, "").replace(/\s+/g, " ").trim();
-          if (cloudTtsPreloadedUrls.has(clean)) return;
-          const urls = buildCloudVoiceStreamUrls(clean);
-          const preAudio = new Audio();
-          preAudio.referrerPolicy = "no-referrer";
-          preAudio.preload = "auto";
-          preAudio.src = urls[0];
-          cloudTtsPreloadedUrls.set(clean, urls[0]);
-        });
-      } catch (e) {}
+      // 대량 동시 요청으로 인한 Google TTS 429/403 IP 차단을 막기 위해 자동 벌크 요청 비활성화
     }
 
     function speakSentence(elementId, customText = null, onEndCallback = null) {
@@ -2401,7 +2372,7 @@
       const audio = getSharedTtsAudio();
       currentTtsAudio = audio;
 
-      // 1순위: 캐시에 이미 생성된 Gemini Aoede 성우 음성이 있으면 동기식으로 즉시(0초) 재생
+      // 1순위: 캐시에 생성된 Gemini Aoede 성우 음성이 있으면 즉시 재생
       if (ttsAudioBlobCache.has(cleanText)) {
         try {
           audio.src = ttsAudioBlobCache.get(cleanText);
@@ -2413,7 +2384,7 @@
         } catch (e) {}
       }
 
-      // 2순위: 사용자 터치 이벤트 안에서 동기식으로 즉시 Google 원어민 성우 스트림 재생 (5초 대기 완전 제거!)
+      // 2순위: <meta name="referrer" content="no-referrer">가 적용된 Google Cloud 원어민 성우 스트림 즉시 재생
       const chunks = splitTextIntoChunks(cleanText, 165);
       let chunkIdx = 0;
 
@@ -2425,7 +2396,12 @@
         }
 
         const chunk = chunks[chunkIdx++];
-        const streamUrls = buildCloudVoiceStreamUrls(chunk);
+        const encoded = encodeURIComponent(chunk);
+        const streamUrls = [
+          `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=tw-ob`,
+          `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=gtx`,
+          `https://dict.youdao.com/dictvoice?audio=${encoded}&type=2`
+        ];
         let urlTryIdx = 0;
 
         const tryPlayStreamUrl = () => {
@@ -2436,7 +2412,6 @@
           }
 
           const currentUrl = streamUrls[urlTryIdx++];
-          audio.referrerPolicy = "no-referrer";
           audio.src = currentUrl;
           audio.playbackRate = 0.96;
 
@@ -2468,7 +2443,7 @@
 
       playNextCloudChunk();
 
-      // 백그라운드에서 Gemini Aoede 성우 캐싱 (API 키가 있을 때만 조용히 준비)
+      // API 키가 등록되어 있으면 백그라운드에서 Gemini Aoede 성우 음성도 준비
       if (getActiveApiKey() && !ttsAudioBlobCache.has(cleanText)) {
         fetchOrCreateNeuralTtsUrl(cleanText);
       }
