@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="referrer" content="no-referrer">
   <title>토스메이트 - 무료 토익스피킹 실전 스터디 플랫폼</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -2327,25 +2326,7 @@
       return chunks;
     }
 
-    // 모바일/PC 공용 단일 오디오 엘리먼트 (DOM에 직접 부착 + no-referrer 완벽 보장)
-    let sharedTtsAudio = null;
-    function getSharedTtsAudio() {
-      if (!sharedTtsAudio) {
-        sharedTtsAudio = document.createElement('audio');
-        sharedTtsAudio.setAttribute('playsinline', '');
-        sharedTtsAudio.setAttribute('webkit-playsinline', '');
-        sharedTtsAudio.preload = 'auto';
-        sharedTtsAudio.style.display = 'none';
-        document.body.appendChild(sharedTtsAudio);
-      }
-      return sharedTtsAudio;
-    }
-
-    function preloadCurrentPartAudio() {
-      // 대량 동시 요청으로 인한 Google TTS 429/403 IP 차단을 막기 위해 자동 벌크 요청 비활성화
-    }
-
-    function speakSentence(elementId, customText = null, onEndCallback = null) {
+    async function speakSentence(elementId, customText = null, onEndCallback = null) {
       const textToSpeak = customText || (elementId ? document.getElementById(elementId)?.innerText : "");
       if (!textToSpeak) {
         if (onEndCallback) onEndCallback();
@@ -2369,83 +2350,69 @@
         }
       };
 
-      const audio = getSharedTtsAudio();
-      currentTtsAudio = audio;
-
-      // 1순위: 캐시에 생성된 Gemini Aoede 성우 음성이 있으면 즉시 재생
-      if (ttsAudioBlobCache.has(cleanText)) {
+      // 1·2순위: 등록된 API 키가 있을 경우 Google Gemini Neural TTS (Aoede 성우) 우선 재생
+      if (getActiveApiKey()) {
         try {
-          audio.src = ttsAudioBlobCache.get(cleanText);
-          audio.onended = finishPlayback;
-          audio.onerror = finishPlayback;
-          const p = audio.play();
-          if (p && typeof p.catch === 'function') p.catch(finishPlayback);
-          return;
-        } catch (e) {}
+          const wavUrl = await fetchOrCreateNeuralTtsUrl(cleanText);
+          if (myRunId !== currentTtsRunId) return;
+          if (wavUrl) {
+            const audio = new Audio(wavUrl);
+            currentTtsAudio = audio;
+            audio.onended = finishPlayback;
+            audio.onerror = finishPlayback;
+            await audio.play();
+            return;
+          }
+        } catch (neuralErr) {
+          console.warn("Neural TTS playback fallback:", neuralErr);
+        }
       }
 
-      // 2순위: <meta name="referrer" content="no-referrer">가 적용된 Google Cloud 원어민 성우 스트림 즉시 재생
-      const chunks = splitTextIntoChunks(cleanText, 165);
-      let chunkIdx = 0;
+      // 2순위: 고품질 클라우드 Neural 성우 오디오 스트림 (기계음 직행 폐기 + 프리버퍼링으로 앞/뒤 끊김 완벽 방지)
+      try {
+        const chunks = splitTextIntoChunks(cleanText, 165);
+        // 모든 문장 청크를 미리 Audio 객체로 프리로드하여 처음 버벅거림과 중간 끊김을 방지
+        const preloadedAudios = chunks.map(chunk => {
+          const streamUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=en-US&client=tw-ob`;
+          const a = new Audio();
+          a.referrerPolicy = "no-referrer";
+          a.preload = "auto";
+          a.src = streamUrl;
+          a.playbackRate = 0.96;
+          a.load();
+          return a;
+        });
 
-      const playNextCloudChunk = () => {
-        if (myRunId !== currentTtsRunId) return;
-        if (chunkIdx >= chunks.length) {
-          finishPlayback();
-          return;
-        }
-
-        const chunk = chunks[chunkIdx++];
-        const encoded = encodeURIComponent(chunk);
-        const streamUrls = [
-          `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=tw-ob`,
-          `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en-US&client=gtx`,
-          `https://dict.youdao.com/dictvoice?audio=${encoded}&type=2`
-        ];
-        let urlTryIdx = 0;
-
-        const tryPlayStreamUrl = () => {
-          if (myRunId !== currentTtsRunId) return;
-          if (urlTryIdx >= streamUrls.length) {
-            playNextCloudChunk();
+        let idx = 0;
+        const playNextChunk = () => {
+          if (myRunId !== currentTtsRunId || isFinished) return;
+          if (idx >= preloadedAudios.length) {
+            finishPlayback();
             return;
           }
 
-          const currentUrl = streamUrls[urlTryIdx++];
-          audio.src = currentUrl;
-          audio.playbackRate = 0.96;
+          const audio = preloadedAudios[idx++];
+          currentTtsAudio = audio;
 
-          let settled = false;
-          audio.onended = () => {
-            if (settled || myRunId !== currentTtsRunId) return;
-            settled = true;
-            playNextCloudChunk();
+          let chunkDone = false;
+          const proceedNext = () => {
+            if (chunkDone || myRunId !== currentTtsRunId) return;
+            chunkDone = true;
+            playNextChunk();
           };
 
-          audio.onerror = () => {
-            if (settled || myRunId !== currentTtsRunId) return;
-            settled = true;
-            tryPlayStreamUrl();
-          };
+          audio.onended = proceedNext;
+          audio.onerror = proceedNext;
 
           const playPromise = audio.play();
           if (playPromise && typeof playPromise.catch === 'function') {
-            playPromise.catch(() => {
-              if (settled || myRunId !== currentTtsRunId) return;
-              settled = true;
-              tryPlayStreamUrl();
-            });
+            playPromise.catch(proceedNext);
           }
         };
 
-        tryPlayStreamUrl();
-      };
-
-      playNextCloudChunk();
-
-      // API 키가 등록되어 있으면 백그라운드에서 Gemini Aoede 성우 음성도 준비
-      if (getActiveApiKey() && !ttsAudioBlobCache.has(cleanText)) {
-        fetchOrCreateNeuralTtsUrl(cleanText);
+        playNextChunk();
+      } catch (e) {
+        finishPlayback();
       }
     }
 
@@ -2453,10 +2420,13 @@
       currentTtsRunId++;
       if (currentTtsAudio) {
         try {
-          currentTtsAudio.onended = null;
-          currentTtsAudio.onerror = null;
           currentTtsAudio.pause();
+          currentTtsAudio.src = "";
         } catch (e) {}
+        currentTtsAudio = null;
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
       document.querySelectorAll('.reading-highlight').forEach(el => el.classList.remove('tts-active'));
     }
