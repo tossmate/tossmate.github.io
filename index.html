@@ -438,13 +438,19 @@
         <!-- Header Info & Status -->
         <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-slate-700 gap-4">
           <div>
-            <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+            <div class="flex items-center gap-1.5 flex-wrap">
               <span id="partBadgeNumber" class="px-2.5 py-1 text-xs font-black uppercase rounded bg-brand-500/20 text-brand-400 border border-brand-500/30">PART 1 (Q1-Q2)</span>
               <span id="partNameKorean" class="text-xs text-slate-400 font-semibold">지문 읽기 (발음·억양·강세 평가)</span>
               <!-- Official Rubric Criteria Tag -->
-              <span id="partRubricTags" class="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 font-medium">
+              <span id="partRubricTags" class="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 font-medium">
                 평가항목: 발음, 억양과 강세
               </span>
+              <!-- Separate Time Info Badges Right Next to Evaluation Criteria -->
+              <div id="partQuickFlowContainer" class="inline-flex items-center flex-wrap gap-1.5">
+                <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 font-medium">
+                  준비 45초 / 답변 45초
+                </span>
+              </div>
             </div>
             <!-- Sub-Question Selector Pills for Real Exam Precision -->
             <div id="subQuestionSelector" class="flex items-center gap-1.5 mt-3">
@@ -638,7 +644,7 @@
             <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 space-y-1.5">
               <div class="text-xs font-bold text-amber-300 flex items-center gap-1.5">
                 <i class="fa-solid fa-bullseye"></i>
-                <span>🎯 질문에서 어디가 중요할까? (이 부분을 그대로 이끌어 내세요!)</span>
+                <span>질문에서 어디가 중요할까? (이 부분을 그대로 이끌어 내세요!)</span>
               </div>
               <p id="p3KeyPointText" class="text-xs text-slate-200 leading-relaxed"></p>
               <div id="p3KeyFormulaBox" class="mt-1.5 p-2 rounded bg-slate-950/90 border border-amber-500/20 text-xs font-mono text-amber-200"></div>
@@ -770,7 +776,7 @@
             <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 space-y-1.5">
               <div class="text-xs font-bold text-amber-300 flex items-center gap-1.5">
                 <i class="fa-solid fa-bullseye"></i>
-                <span>🎯 지문(질문·표)에서 어디가 중요할까? (이 부분을 그대로 이끌어 내세요!)</span>
+                <span>지문(질문·표)에서 어디가 중요할까? (이 부분을 그대로 이끌어 내세요!)</span>
               </div>
               <p id="p4KeyPointText" class="text-xs text-slate-200 leading-relaxed"></p>
               <div id="p4KeyFormulaBox" class="mt-1.5 p-2 rounded bg-slate-950/90 border border-amber-500/20 text-xs font-mono text-amber-200"></div>
@@ -882,7 +888,7 @@
             <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 space-y-1.5">
               <div class="text-xs font-bold text-amber-300 flex items-center gap-1.5">
                 <i class="fa-solid fa-bullseye"></i>
-                <span>🎯 지문에서 어디가 중요할까? (이 부분을 그대로 이끌어 내세요!)</span>
+                <span>지문에서 어디가 중요할까? (이 부분을 그대로 이끌어 내세요!)</span>
               </div>
               <p id="p5KeyPointText" class="text-xs text-slate-200 leading-relaxed"></p>
               <div id="p5KeyFormulaBox" class="mt-1.5 p-2 rounded bg-slate-950/90 border border-amber-500/20 text-xs font-mono text-amber-200"></div>
@@ -1458,53 +1464,6 @@
     let recognition = null;
     let isSttActive = false;
     let liveTranscript = "";
-    let sttAccumulatedFinal = "";
-    let sttCurrentSessionFinal = "";
-    let sttRestartTimer = null;
-    let sharedTtsAudioPlayer = null;
-    let isMobileAudioUnlocked = false;
-
-    // 모바일(iOS Safari / Android Chrome) 오디오 잠금 해제 및 단일 AudioContext 재사용
-    function unlockMobileAudioAndSpeech() {
-      try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (AudioCtx) {
-          if (!audioContext || audioContext.state === 'closed') {
-            audioContext = new AudioCtx();
-          }
-          if (audioContext.state === 'suspended') {
-            audioContext.resume();
-          }
-          if (!isMobileAudioUnlocked) {
-            const buffer = audioContext.createBuffer(1, 1, 22050);
-            const source = audioContext.createBufferSource();
-            source.buffer = buffer;
-            source.connect(audioContext.destination);
-            if (source.start) source.start(0);
-          }
-        }
-        if (!sharedTtsAudioPlayer) {
-          sharedTtsAudioPlayer = new Audio();
-          sharedTtsAudioPlayer.playsInline = true;
-          sharedTtsAudioPlayer.setAttribute('playsinline', '');
-          sharedTtsAudioPlayer.setAttribute('webkit-playsinline', '');
-        }
-        if (!isMobileAudioUnlocked && 'speechSynthesis' in window) {
-          window.speechSynthesis.getVoices();
-          const warmUp = new SpeechSynthesisUtterance('');
-          warmUp.volume = 0;
-          warmUp.lang = 'en-US';
-          window.speechSynthesis.speak(warmUp);
-        }
-        isMobileAudioUnlocked = true;
-      } catch (e) {
-        console.warn("Mobile audio unlock warning:", e);
-      }
-    }
-
-    function isMobileBrowserEnv() {
-      return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || "");
-    }
 
     // API Key Configuration (No built-in keys; requires user's own verified Gemini API key)
     const apiKey = "";
@@ -1776,6 +1735,7 @@
         title: "Part 1 (Q1-Q2) 문장 읽기",
         koreanTitle: "지문 읽기 (Read a text aloud)",
         rubricCriteria: "평가항목: 발음, 억양과 강세",
+        quickFlowBadges: ["준비 45초 / 답변 45초"],
         directions: "In this part of the test, you will read aloud the text on the screen. You will have 45 seconds to prepare. Then you will have 45 seconds to read the text aloud.",
         questions: [
           { qId: "Q1", prepSec: 45, respSec: 45, label: "Q1 (45초 준비 / 45초 답변)" },
@@ -1793,6 +1753,7 @@
         title: "Part 2 (Q3-Q4) 사진 묘사",
         koreanTitle: "사진 묘사 (Describe a picture)",
         rubricCriteria: "평가항목: 발음, 억양/강세 + 문법, 어휘, 일관성",
+        quickFlowBadges: ["준비 45초 / 답변 30초"],
         directions: "In this part of the test, you will describe the picture on your screen in as much detail as you can. You will have 45 seconds to prepare your response. Then you will have 30 seconds to speak about the picture.",
         questions: [
           { qId: "Q3", prepSec: 45, respSec: 30, label: "Q3 (45초 준비 / 30초 답변)" },
@@ -1809,6 +1770,7 @@
         title: "Part 3 (Q5-Q7) 듣고 질문에 답하기",
         koreanTitle: "일상 대화 및 인터뷰 (Respond to questions)",
         rubricCriteria: "평가항목: 발음·억양·강세·문법·어휘·일관성(Q5~Q7 입장유지)·내용 관련성·완성도",
+        quickFlowBadges: ["Q5·Q6: 준비 3초 / 답변 15초", "Q7: 준비 3초 / 답변 30초"],
         directions: "In this part of the test, you will answer three questions. You will have three seconds to prepare after you hear each question. You will have 15 seconds to respond to the first two questions, and 30 seconds to respond to the third question.",
         scenario: "Imagine that a new work colleague has recently moved to your area and would like some information about things to do. You are having a telephone conversation about your town.",
         questions: [
@@ -1828,6 +1790,7 @@
         title: "Part 4 (Q8-Q10) 제공된 정보를 사용하여 답하기",
         koreanTitle: "표 정보 활용 (Respond using information provided)",
         rubricCriteria: "평가항목: 위 모든 항목 종합 평가 (*10번 문항 질문 2회 청취 제공)",
+        quickFlowBadges: ["표 읽기 45초", "Q8·Q9: 준비 3초 / 답변 15초", "Q10: 준비 3초 / 답변 30초"],
         directions: "In this part of the test, you will answer three questions based on the information provided. You will have 45 seconds to read the information before the questions begin. You will have three seconds to prepare and 15 seconds to respond to the first two questions. You will hear the third question two times, and you will have 30 seconds to respond.",
         questions: [
           { qId: "Q8", prepSec: 3, respSec: 15, label: "Q8 일정확인 (3초 준비 / 15초 답변)" },
@@ -1845,6 +1808,7 @@
         title: "Part 5 (Q11) 의견 제시하기",
         koreanTitle: "의견 제시 (Express an opinion)",
         rubricCriteria: "평가항목: 발음, 어휘, 문법, 논리적 일관성 및 완성도 전체 총괄",
+        quickFlowBadges: ["준비 45초 / 답변 60초"],
         directions: "In this part of the test, you will give your opinion about a specific topic. Be sure to say as much as you can in the time allowed. You will have 45 seconds to prepare. Then you will have 60 seconds to speak.",
         questions: [
           { qId: "Q11", prepSec: 45, respSec: 60, label: "Q11 (45초 준비 / 60초 답변)" }
@@ -1891,7 +1855,7 @@
       },
       2: {
         prompt: `
-          <div class="max-w-2xl mx-auto space-y-4">
+          <div class="max-w-2xl mx-auto space-y-3">
             <div class="flex items-center justify-between text-xs text-brand-400 font-bold uppercase">
               <span id="part2ScenarioTitle">Describe a Picture (Part 2)</span>
             </div>
@@ -1902,10 +1866,6 @@
               <div id="part2TagsContainer" class="absolute bottom-2.5 left-2.5 flex flex-wrap gap-1.5 pointer-events-none">
                 <!-- Dynamically injected keyword tags -->
               </div>
-            </div>
-
-            <div class="text-xs text-slate-400 text-center">
-              <b>답변 시간: 30초</b> | 준비시간 동안 중심 인물 2명의 동작과 주변 배경 1가지를 머릿속으로 떠올리세요.
             </div>
           </div>
         `
@@ -1939,10 +1899,6 @@
             <div id="part3QuestionText" style="opacity: 0.15; filter: blur(5px); pointer-events: none;" class="text-base sm:text-lg font-bold text-white bg-slate-900/60 p-5 rounded-xl border border-slate-800 leading-snug cursor-pointer transition-all duration-500" onclick="playCurrentQuestionAudio()" title="시험 시작 시 상황 지문 청취 후 공개됩니다">
               "What is your favorite restaurant in your town, and what kind of food do they serve there?"
             </div>
-            <div class="text-xs text-slate-400 flex items-center justify-between px-1">
-              <span><b>Q5·Q6:</b> 준비 3초 / 답변 15초 | <b>Q7:</b> 준비 3초 / 답변 30초</span>
-              <span id="p3StatusHelpText" class="text-brand-300">시험 시작 시 상황 청취 후 질문이 공개됩니다</span>
-            </div>
           </div>
         `
       },
@@ -1956,8 +1912,8 @@
                   <i class="fa-solid fa-volume-high text-[10px]"></i>
                   <span id="p4AudioBtnText">질문 음성만 듣기</span>
                 </button>
-                <button onclick="startTableReadingTime()" class="px-2 py-0.5 rounded bg-brand-500/20 text-brand-300 border border-brand-500/30 text-[11px] hover:bg-brand-500/30">
-                  <i class="fa-solid fa-clock mr-1"></i>지문 읽기 시간 (45초)
+                <button type="button" onclick="startTableReadingTime()" class="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 font-medium hover:bg-slate-700 transition">
+                  표 읽기 시간: 45초
                 </button>
               </div>
             </div>
@@ -1986,25 +1942,12 @@
                 </div>
               </div>
             </div>
-            <!-- Real Exam Audio-Only Notice Box (No question text shown on main screen) -->
-            <div id="part4AudioStatusBox" class="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800 flex items-center justify-between text-xs text-slate-300">
-              <div class="flex items-center space-x-2.5 text-left">
-                <div class="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
-                  <i class="fa-solid fa-ear-listen"></i>
-                </div>
-                <div>
-                  <div class="font-bold text-white text-xs">실전 모드: 상황 나레이션 및 질문은 화면에 표시되지 않고 음성으로만 출제됩니다.</div>
-                  <div class="text-[11px] text-slate-400 mt-0.5">[시험 시작]을 누르면 <b class="text-amber-300">상황 나레이션 ➔ 질문 ➔ Begin preparing now ➔ 삐(3초) ➔ Begin speaking now ➔ 삐(녹음)</b> 순으로 진행됩니다.</div>
-                </div>
-              </div>
-              <span id="p4Q10Notice" class="text-amber-400 font-semibold text-[11px] shrink-0 ml-2">해설지에서 지문/번역 확인 가능</span>
-            </div>
           </div>
         `
       },
       5: {
         prompt: `
-          <div class="max-w-xl mx-auto space-y-4">
+          <div class="max-w-xl mx-auto space-y-3">
             <div class="flex items-center justify-between text-xs text-brand-400 font-bold uppercase">
               <span>Express an Opinion (Part 5 - Q11)</span>
               <div class="flex items-center gap-2">
@@ -2023,10 +1966,6 @@
                 <div>• Working from home</div>
                 <div>• Working in a traditional office</div>
               </div>
-            </div>
-            <div class="text-xs text-slate-400 flex items-center justify-between px-1">
-              <span>⏱️ 실전 진행: 지문 낭독 ➔ Begin preparing now ➔ 삐(45초 준비) ➔ Begin speaking now ➔ 삐(60초 답변)</span>
-              <span class="text-brand-300">해설지에서 '복붙 말하기 꿀팁' & 품사 확인</span>
             </div>
           </div>
         `
@@ -2398,8 +2337,6 @@
       const myRunId = currentTtsRunId;
       const cleanText = textToSpeak.replace(/[↗↘]/g, "").replace(/\s+/g, " ").trim();
 
-      unlockMobileAudioAndSpeech();
-
       const el = elementId ? document.getElementById(elementId) : null;
       if (el) el.classList.add('tts-active');
 
@@ -2419,10 +2356,7 @@
           const wavUrl = await fetchOrCreateNeuralTtsUrl(cleanText);
           if (myRunId !== currentTtsRunId) return;
           if (wavUrl) {
-            const audio = sharedTtsAudioPlayer || new Audio();
-            audio.pause();
-            audio.src = wavUrl;
-            audio.playbackRate = 1.0;
+            const audio = new Audio(wavUrl);
             currentTtsAudio = audio;
             audio.onended = finishPlayback;
             audio.onerror = finishPlayback;
@@ -2434,7 +2368,7 @@
         }
       }
 
-      // 3순위: 브라우저 내장 미국 원어민 음성(speechSynthesis) (iOS Safari 및 모바일에서 가장 확실하게 작동)
+      // 3순위: 브라우저 내장 미국 원어민 음성(speechSynthesis) 또는 Google TTS 스트림으로 문장 전체를 끊김 없이 끝까지 낭독
       const playWithBrowserSpeechSynthesis = () => {
         if (myRunId !== currentTtsRunId) return;
         if (!('speechSynthesis' in window)) {
@@ -2444,54 +2378,47 @@
         }
         try {
           window.speechSynthesis.cancel();
-          if (window.speechSynthesis.paused) {
-            window.speechSynthesis.resume();
-          }
           const utterance = new SpeechSynthesisUtterance(cleanText);
           utterance.lang = 'en-US';
           utterance.rate = 0.94;
           utterance.pitch = 1.0;
-          utterance.volume = 1.0;
 
           const voices = window.speechSynthesis.getVoices();
           const preferredVoice =
-            voices.find(v => v.lang === 'en-US' && /Samantha|Google US English|Ava|Allison|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
-            voices.find(v => v.lang && v.lang.replace('_', '-').startsWith('en-US')) ||
-            voices.find(v => v.lang && v.lang.startsWith('en'));
+            voices.find(v => v.lang === 'en-US' && /Google US English|Samantha|Jenny|Aria|Zira|Natural/i.test(v.name)) ||
+            voices.find(v => v.lang.startsWith('en-US')) ||
+            voices.find(v => v.lang.startsWith('en'));
           if (preferredVoice) {
             utterance.voice = preferredVoice;
           }
 
-          // 모바일/데스크톱 긴 문장 끊김 방지용 안전 타이머 (iOS Safari는 pause/resume 호출 시 음성이 멈추므로 데스크톱 Chrome에서만 keep-alive 실행)
-          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || "") || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-          const estimatedMs = Math.max(1800, cleanText.split(/\s+/).length * 460);
+          const estimatedMs = Math.max(1600, cleanText.split(/\s+/).length * 450);
           const safetyTimer = setTimeout(() => {
-            finishPlayback();
-          }, estimatedMs + 2200);
+            if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+              finishPlayback();
+            }
+          }, estimatedMs + 1500);
 
-          let resumeInterval = null;
-          if (!isIOS) {
-            resumeInterval = setInterval(() => {
-              if (myRunId !== currentTtsRunId || isFinished) {
-                clearInterval(resumeInterval);
-                return;
-              }
-              if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-                window.speechSynthesis.pause();
-                window.speechSynthesis.resume();
-              }
-            }, 8000);
-          }
+          const resumeInterval = setInterval(() => {
+            if (myRunId !== currentTtsRunId || isFinished) {
+              clearInterval(resumeInterval);
+              return;
+            }
+            if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+              window.speechSynthesis.pause();
+              window.speechSynthesis.resume();
+            }
+          }, 5000);
 
           utterance.onend = () => {
             clearTimeout(safetyTimer);
-            if (resumeInterval) clearInterval(resumeInterval);
+            clearInterval(resumeInterval);
             finishPlayback();
           };
           utterance.onerror = () => {
             clearTimeout(safetyTimer);
-            if (resumeInterval) clearInterval(resumeInterval);
-            setTimeout(finishPlayback, Math.min(2000, estimatedMs));
+            clearInterval(resumeInterval);
+            setTimeout(finishPlayback, Math.min(2500, estimatedMs));
           };
 
           window.speechSynthesis.speak(utterance);
@@ -2501,14 +2428,6 @@
         }
       };
 
-      // iOS Safari 및 모바일 브라우저에서는 외부 translate_tts 오디오 스트림이 자동재생 차단(NotAllowedError)되므로 즉시 내장 원어민 음성으로 재생
-      const isIOSOrSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent || "") || /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-      if (isIOSOrSafari || isMobileBrowserEnv()) {
-        playWithBrowserSpeechSynthesis();
-        return;
-      }
-
-      // 데스크톱 환경에서는 Google TTS 스트림 시도 후 실패 시 즉시 브라우저 원어민 음성으로 전환
       try {
         const chunks = splitTextIntoChunks(cleanText, 160);
         let idx = 0;
@@ -2521,9 +2440,7 @@
           }
           const chunk = chunks[idx++];
           const streamUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=en-US&client=tw-ob`;
-          const audio = sharedTtsAudioPlayer || new Audio();
-          audio.pause();
-          audio.src = streamUrl;
+          const audio = new Audio(streamUrl);
           currentTtsAudio = audio;
           audio.playbackRate = 0.96;
 
@@ -2558,12 +2475,12 @@
       if (currentTtsAudio) {
         try {
           currentTtsAudio.pause();
-          currentTtsAudio.removeAttribute('src');
+          currentTtsAudio.src = "";
         } catch (e) {}
         currentTtsAudio = null;
       }
       if ('speechSynthesis' in window) {
-        try { window.speechSynthesis.cancel(); } catch (e) {}
+        window.speechSynthesis.cancel();
       }
       document.querySelectorAll('.reading-highlight').forEach(el => el.classList.remove('tts-active'));
     }
@@ -2585,24 +2502,17 @@
 
     function playBeep(freq = 880, duration = 350) {
       try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
-        if (!audioContext || audioContext.state === 'closed') {
-          audioContext = new AudioCtx();
-        }
-        if (audioContext.state === 'suspended') {
-          audioContext.resume();
-        }
-        const osc = audioContext.createOscillator();
-        const gain = audioContext.createGain();
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, audioContext.currentTime);
-        gain.gain.setValueAtTime(0.18, audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration / 1000);
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(0.18, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration / 1000);
         osc.connect(gain);
-        gain.connect(audioContext.destination);
+        gain.connect(ctx.destination);
         osc.start();
-        osc.stop(audioContext.currentTime + duration / 1000);
+        osc.stop(ctx.currentTime + duration / 1000);
       } catch (e) {
         console.warn("Beep error:", e);
       }
@@ -5625,7 +5535,6 @@ Return ONLY valid JSON matching this schema:
     }
 
     function toggleEngine() {
-      unlockMobileAudioAndSpeech();
       if (engineState === 'recording' || engineState === 'listening' || engineState === 'preparing') {
         completeResponse();
       } else {
@@ -6037,53 +5946,12 @@ Return ONLY valid JSON matching this schema:
     /* =====================================================================
        5. AUDIO RECORDING & VISUALIZER ENGINE
        ===================================================================== */
-    function getSupportedRecorderMimeType() {
-      if (typeof MediaRecorder === 'undefined') return '';
-      const types = [
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/mp4',
-        'audio/aac',
-        'audio/ogg;codecs=opus'
-      ];
-      for (const t of types) {
-        if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) {
-          return t;
-        }
-      }
-      return '';
-    }
-
     async function initAudioRecording() {
-      // 모바일 크롬(Android)에서는 getUserMedia와 SpeechRecognition이 동시에 마이크를 잡으면
-      // 3~5초 뒤에 음성인식(STT)이 강제 중단되므로, 모바일에서 STT 지원 시 STT 마이크에 우선권을 부여하고 가상 파형을 표시합니다.
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (isMobileBrowserEnv() && SpeechRecognition) {
-        const micText = document.getElementById('micStatusText');
-        if (micText) micText.innerText = "모바일 음성인식 마이크 집중 모드 (끊김 방지)";
-        const overlay = document.getElementById('canvasOverlayText');
-        if (overlay) overlay.classList.add('hidden');
-        drawMobileSimulatedVisualizer();
-        return;
-      }
-
       try {
         recordedChunks = [];
-        audioStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        });
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!audioContext || audioContext.state === 'closed') {
-          audioContext = new AudioCtx();
-        }
-        if (audioContext.state === 'suspended') {
-          await audioContext.resume();
-        }
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 64;
         const source = audioContext.createMediaStreamSource(audioStream);
@@ -6096,77 +5964,38 @@ Return ONLY valid JSON matching this schema:
 
         drawVisualizer();
 
-        if (typeof MediaRecorder !== 'undefined') {
-          const supportedMime = getSupportedRecorderMimeType();
-          mediaRecorder = supportedMime
-            ? new MediaRecorder(audioStream, { mimeType: supportedMime })
-            : new MediaRecorder(audioStream);
+        mediaRecorder = new MediaRecorder(audioStream);
+        const targetPartAtStart = currentPart;
+        const targetIdxAtStart = currentQuestionIndex;
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+          const audioUrl = URL.createObjectURL(blob);
+          const targetRec = getQuestionResponseRecord(targetPartAtStart, targetIdxAtStart);
+          targetRec.audioUrl = audioUrl;
 
-          const targetPartAtStart = currentPart;
-          const targetIdxAtStart = currentQuestionIndex;
-          mediaRecorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-          };
-          mediaRecorder.onstop = () => {
-            const finalMime = supportedMime || (recordedChunks[0]?.type) || 'audio/mp4';
-            const ext = finalMime.includes('mp4') || finalMime.includes('aac') ? 'm4a' : 'webm';
-            const blob = new Blob(recordedChunks, { type: finalMime });
-            const audioUrl = URL.createObjectURL(blob);
-            const targetRec = getQuestionResponseRecord(targetPartAtStart, targetIdxAtStart);
-            targetRec.audioUrl = audioUrl;
+          if (currentPart === targetPartAtStart && currentQuestionIndex === targetIdxAtStart) {
+            const player = document.getElementById('recordedAudioPlayer');
+            if (player) player.src = audioUrl;
 
-            if (currentPart === targetPartAtStart && currentQuestionIndex === targetIdxAtStart) {
-              const player = document.getElementById('recordedAudioPlayer');
-              if (player) {
-                player.src = audioUrl;
-                player.playsInline = true;
-              }
-
-              const qMeta = TOS_EXAM_STRUCTURE[targetPartAtStart]?.questions?.[targetIdxAtStart];
-              const qLabel = qMeta ? qMeta.qId : `Q${targetIdxAtStart + 1}`;
-              const downloadBtn = document.getElementById('downloadRecordBtn');
-              if (downloadBtn) {
-                downloadBtn.href = audioUrl;
-                downloadBtn.download = `toss_speaking_part${targetPartAtStart}_${qLabel}_answer.${ext}`;
-                downloadBtn.classList.remove('opacity-40', 'pointer-events-none');
-              }
+            const qMeta = TOS_EXAM_STRUCTURE[targetPartAtStart]?.questions?.[targetIdxAtStart];
+            const qLabel = qMeta ? qMeta.qId : `Q${targetIdxAtStart + 1}`;
+            const downloadBtn = document.getElementById('downloadRecordBtn');
+            if (downloadBtn) {
+              downloadBtn.href = audioUrl;
+              downloadBtn.download = `toss_speaking_part${targetPartAtStart}_${qLabel}_answer.webm`;
+              downloadBtn.classList.remove('opacity-40', 'pointer-events-none');
             }
-          };
-          mediaRecorder.start(1000);
-        }
+          }
+        };
+        mediaRecorder.start();
       } catch (err) {
         console.warn("Microphone access failed:", err);
         const micText = document.getElementById('micStatusText');
         if (micText) micText.innerText = "마이크 권한 필요";
       }
-    }
-
-    function drawMobileSimulatedVisualizer() {
-      const canvas = document.getElementById('visualizerCanvas');
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      const barCount = 32;
-
-      function render() {
-        if (engineState !== 'recording') return;
-        visualizerAnimationId = requestAnimationFrame(render);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const barWidth = (canvas.width / barCount) * 1.2;
-        let x = 0;
-        const t = Date.now() / 160;
-        for (let i = 0; i < barCount; i++) {
-          const wave = Math.abs(Math.sin(t + i * 0.45)) * 0.65 + 0.15;
-          const barHeight = wave * canvas.height;
-          ctx.fillStyle = `rgb(140, 99, 241)`;
-          ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
-          x += barWidth;
-        }
-        // 모바일 시뮬레이션 모드에서도 정상 성량 샘플 기록
-        if (typeof calibrationVolumeSamples !== 'undefined') {
-          calibrationVolumeSamples.push(45);
-        }
-      }
-      render();
     }
 
     function drawVisualizer() {
@@ -6277,15 +6106,8 @@ Return ONLY valid JSON matching this schema:
 
     function stopSpeechRecognition() {
       isSttActive = false;
-      if (sttRestartTimer) {
-        clearTimeout(sttRestartTimer);
-        sttRestartTimer = null;
-      }
       if (recognition) {
-        try {
-          recognition.onend = null;
-          recognition.stop();
-        } catch (e) {}
+        try { recognition.stop(); } catch (e) {}
       }
       const badge = document.getElementById('sttStatusBadge');
       if (badge) {
@@ -7015,6 +6837,14 @@ Return ONLY valid JSON:
       document.getElementById('partNameKorean').innerText = partMeta.koreanTitle;
       const tagEl = document.getElementById('partRubricTags');
       if (tagEl) tagEl.innerText = partMeta.rubricCriteria;
+      const quickFlowContainer = document.getElementById('partQuickFlowContainer');
+      if (quickFlowContainer) {
+        quickFlowContainer.innerHTML = (partMeta.quickFlowBadges || []).map(txt => `
+          <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 font-medium">
+            ${txt}
+          </span>
+        `).join('');
+      }
 
       const dirBody = document.getElementById('directionsBodyText');
       if (dirBody) {
@@ -7652,12 +7482,6 @@ Return ONLY valid JSON:
 
     initSpeechRecognition = function () {
       resetCalibrationMetrics();
-      sttAccumulatedFinal = "";
-      sttCurrentSessionFinal = "";
-      if (sttRestartTimer) {
-        clearTimeout(sttRestartTimer);
-        sttRestartTimer = null;
-      }
 
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
@@ -7666,22 +7490,13 @@ Return ONLY valid JSON:
         return;
       }
 
-      if (recognition) {
-        try {
-          recognition.onend = null;
-          recognition.abort();
-        } catch (e) {}
-      }
-
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
       recognition.lang = 'en-US';
 
       recognition.onstart = () => {
         isSttActive = true;
-        sttCurrentSessionFinal = "";
         const badge = document.getElementById('sttStatusBadge');
         if (badge) {
           badge.innerText = "실시간 영어 인식 중";
@@ -7691,27 +7506,22 @@ Return ONLY valid JSON:
 
       recognition.onresult = (event) => {
         const nowMs = Date.now();
-        let sessionFinalStr = "";
+        let finalStr = "";
         let interimStr = "";
 
         for (let i = 0; i < event.results.length; ++i) {
           const res = event.results[i];
-          const chunk = (res[0] && res[0].transcript) ? res[0].transcript.trim() : "";
-          if (!chunk) continue;
           if (res.isFinal) {
-            sessionFinalStr += chunk + " ";
+            finalStr += res[0].transcript + " ";
             if (typeof res[0].confidence === 'number' && res[0].confidence > 0) {
               calibrationConfidenceSamples.push(res[0].confidence);
             }
           } else {
-            interimStr += chunk + " ";
+            interimStr += res[0].transcript;
           }
         }
 
-        sttCurrentSessionFinal = sessionFinalStr.trim();
-        const fullFinal = [sttAccumulatedFinal, sttCurrentSessionFinal].filter(Boolean).join(" ").trim();
-        const currentCombined = [fullFinal, interimStr.trim()].filter(Boolean).join(" ").trim();
-
+        const currentCombined = (finalStr + interimStr).trim();
         const prevWords = countWords(liveTranscript);
         const currentWords = countWords(currentCombined);
 
@@ -7728,10 +7538,10 @@ Return ONLY valid JSON:
           calibrationLastSpeechMs = nowMs;
         }
 
-        liveTranscript = currentCombined;
+        liveTranscript = finalStr + interimStr;
         const displayEl = document.getElementById('liveTranscriptDisplay');
         if (displayEl) {
-          displayEl.innerHTML = `<span class="text-white">${fullFinal ? fullFinal + ' ' : ''}</span><span class="text-brand-300 italic">${interimStr}</span>`;
+          displayEl.innerHTML = `<span class="text-white">${finalStr}</span><span class="text-brand-300 italic">${interimStr}</span>`;
           displayEl.scrollTop = displayEl.scrollHeight;
         }
 
@@ -7741,46 +7551,11 @@ Return ONLY valid JSON:
 
       recognition.onerror = (e) => {
         console.warn("STT Error:", e.error);
-        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          isSttActive = false;
-        }
       };
 
-      // 모바일 크롬에서 3~5초 호흡 후 세션이 자동 종료(onend)되더라도
-      // 이전까지 말한 텍스트(sttAccumulatedFinal)를 안전하게 보존하고 120ms 뒤 즉시 재연결합니다!
       recognition.onend = () => {
-        if (sttCurrentSessionFinal) {
-          sttAccumulatedFinal = [sttAccumulatedFinal, sttCurrentSessionFinal].filter(Boolean).join(" ").trim();
-          sttCurrentSessionFinal = "";
-        }
         if (engineState === 'recording' && isSttActive) {
-          if (sttRestartTimer) clearTimeout(sttRestartTimer);
-          sttRestartTimer = setTimeout(() => {
-            if (engineState === 'recording' && isSttActive) {
-              try {
-                recognition.start();
-              } catch (err) {
-                try {
-                  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-                  if (SpeechRec) {
-                    const prevOnStart = recognition.onstart;
-                    const prevOnResult = recognition.onresult;
-                    const prevOnError = recognition.onerror;
-                    const prevOnEnd = recognition.onend;
-                    recognition = new SpeechRec();
-                    recognition.continuous = true;
-                    recognition.interimResults = true;
-                    recognition.lang = 'en-US';
-                    recognition.onstart = prevOnStart;
-                    recognition.onresult = prevOnResult;
-                    recognition.onerror = prevOnError;
-                    recognition.onend = prevOnEnd;
-                    recognition.start();
-                  }
-                } catch (e2) {}
-              }
-            }
-          }, 120);
+          try { recognition.start(); } catch (err) {}
         }
       };
 
@@ -8023,12 +7798,122 @@ Return ONLY valid JSON:
         });
       }
 
+      // 7) 깨진 구문 / STT 오인식 연쇄 문법 붕괴 감지 (예: "I am better song walk down", "so changing in", "trading at" 등)
+      const danglingPrep = clean.match(/\b(at|in|on|to|from|with|for|of|by|about)\s*[.!?]*$/i);
+      if (danglingPrep) {
+        errors.push({
+          wrong: clean.split(/\s+/).slice(-3).join(" "),
+          fix: "전치사 뒤에 목적어(명사/시간/장소)를 완성해 주세요.",
+          reason: `[문장 끝 미완성 오류 (-15점)] 문장이 전치사('${danglingPrep[1]}')로 끝나 목적어가 누락된 불완전한 문장입니다.`
+        });
+      }
+
+      const conjBareIng = clean.match(/\b(so|and|but|because|or)\s+(changing|trading|walking|working|going|making|taking|having|doing|saying|looking|sitting|standing|wearing|holding|using)\s+(in|at|on|to|for|with|the|a)\b/gi);
+      if (conjBareIng) {
+        conjBareIng.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: hit.replace(/\b(so|and|but|because|or)\s+(\w+ing)/i, "$1 there is a change / it is $2"),
+            reason: "[주어·be동사 누락 구문 붕괴 (-15점)] 접속사 뒤에 주어와 be동사 없이 '-ing' 형태만 단독으로 이어져 문법 구조가 깨졌습니다."
+          });
+        });
+      }
+
+      const brokenBeNounVerb = clean.match(/\b(I\s+am|he\s+is|she\s+is|it\s+is|they\s+are|we\s+are)\s+(?:better|good|bad|very|so)?\s*[a-z]+\s+(walk|go|come|take|make|do|eat|work|play|run|sit|stand|change|trade|start|end|begin|finish)\b/gi);
+      if (brokenBeNounVerb) {
+        brokenBeNounVerb.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: "I am very sorry, but there is a change in the schedule.",
+            reason: "[동사 충돌 · 어순 붕괴 (-15점)] 'be동사(am/is/are)' 절 안에 명사와 동사원형이 어순에 맞지 않게 연달아 충돌하여 문장이 성립하지 않습니다."
+          });
+        });
+      }
+
+      const articleAdverbEnd = clean.match(/\b(the|a|an)\s+(essentially|very|really|extremely|actually|currently|originally|officially)\s+\w+ing\b/gi);
+      if (articleAdverbEnd) {
+        articleAdverbEnd.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: "the session starts at ~",
+            reason: "[관사+부사+분사 구문 오류 (-15점)] 관사(the/a) 뒤에 핵심 명사와 본동사 없이 부사와 분사만 어색하게 결합되었습니다."
+          });
+        });
+      }
+
+      // 8) 형용사 자리에 부사(-ly) 오용 및 'closely to / nearly to' 오류 (예: "closely to my house" -> "close to my house")
+      const adverbPrepMismatch = clean.match(/\b(closely|nearly|farly|nextly|oppositely)\s+to\b/gi);
+      if (adverbPrepMismatch) {
+        adverbPrepMismatch.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: hit.replace(/closely/i, "close").replace(/nearly/i, "near"),
+            reason: "[형용사/부사 품사 오류 (-15점)] '~에서 가까운'을 뜻할 때는 부사 'closely to'가 아니라 형용사구 'close to' 또는 전치사 'near'를 써야 합니다."
+          });
+        });
+      }
+
+      const beAdverbOnly = clean.match(/\b(is|am|are|was|were)\s+(closely|nearly|importantly|conveniently|beneficially|deliciously|cheaply|quietly)\s+(to|for|in|at|from|with|$)/gi);
+      if (beAdverbOnly) {
+        beAdverbOnly.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: hit.replace(/ly\b/i, ""),
+            reason: "[be동사 보어 품사 오류 (-15점)] be동사(is/are) 뒤에서 주어를 설명하는 보어 자리에는 부사(-ly)가 아니라 형용사가 와야 합니다."
+          });
+        });
+      }
+
+      // 9) 'is a + -ing' 형태의 비문 및 STT 오인식 구문 (예: "is a shooting", "is a working", "the location thing is")
+      const articleGerundMismatch = clean.match(/\b(is|are|was|were)\s+(a|an)\s+(shooting|working|going|eating|walking|talking|studying|buying|playing|making|taking|doing|running|sitting|standing|visiting|using)\b/gi);
+      if (articleGerundMismatch) {
+        articleGerundMismatch.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: "is located / is very close",
+            reason: "[비문 보어 구조 · STT 오인식 (-15점)] 'be동사 + a/an + 동사-ing(예: is a shooting)'는 영어에서 성립하지 않는 어색한 문법 구조입니다."
+          });
+        });
+      }
+
+      const vagueThingSubject = clean.match(/\b(the|a)\s+[a-z]+\s+thing\s+(is|are|was|were)\b/gi);
+      if (vagueThingSubject) {
+        vagueThingSubject.forEach(hit => {
+          errors.push({
+            wrong: hit,
+            fix: "The location is / It is",
+            reason: "[주어 명사구 어색함 (-15점)] 'the ~ thing is' 형태의 모호한 구어체 결합 대신 명확한 주어(The location is / My favorite place is)를 사용하세요."
+          });
+        });
+      }
+
+      // 10) 질문 핵심 문맥과의 관련성(Relevance) 및 의미 성립 검증 (Part 3·4·5에서 엉뚱한 단어 나열 시 감점)
+      let isContextMatched = true;
+      if (partNum >= 3 && countWords(clean) >= 4) {
+        const promptLower = getCurrentQuestionPromptContext().toLowerCase();
+        const stopWords = new Set(["what", "where", "when", "which", "your", "there", "they", "have", "would", "most", "that", "with", "from", "about", "could", "tell", "give", "details", "following", "choose", "options", "below", "provide", "specific", "reasons", "examples", "support", "opinions", "question", "part", "table"]);
+        const keywords = promptLower.replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w));
+        const lowerClean = clean.toLowerCase();
+        const matched = keywords.filter(k => lowerClean.includes(k));
+        const hasCommonValidAnswerWords = /\b(like|love|prefer|favorite|recommend|think|believe|usually|often|week|month|year|day|morning|evening|night|because|first|second|starts|begins|ends|cancelled|canceled|session|class|workshop|schedule|restaurant|park|food|burger|pizza|coffee|exercise|gym|phone|hotel|book|work|home|office|bus|subway)\b/i.test(lowerClean);
+
+        if (matched.length === 0 && !hasCommonValidAnswerWords) {
+          isContextMatched = false;
+          errors.push({
+            wrong: clean,
+            fix: "질문의 핵심 단어를 포함하여 주어+동사+목적어로 명확히 답변해 주세요.",
+            reason: "[문맥 불일치 · 의미 불분명 (-15점)] 질문에서 묻는 핵심 주제어나 유효한 답변 표현이 전혀 포함되지 않은 어색한 문장입니다."
+          });
+        }
+      }
+
       correctedFull = correctedFull
         .replace(/\b(he|she|it)\s+are\b/gi, "$1 is")
         .replace(/\b(he|she|it)\s+have\b/gi, "$1 has")
         .replace(/\b(they|we|people)\s+is\b/gi, "$1 are")
         .replace(/\b(he|she)\s+(wearing|holding|sitting|standing|looking|talking)\b/gi, "$1 is $2")
         .replace(/\b(they|people)\s+(wearing|holding|sitting|standing|looking|talking)\b/gi, "$1 are $2")
+        .replace(/\bclosely\s+to\b/gi, "close to")
         .replace(/\bI\s+is\b/g, "I am")
         .replace(/\bgo\s+to\s+home\b/gi, "go home")
         .replace(/\ba\s+(apple|office|hour|event|evening|afternoon|outdoor|expensive|important|easy|interesting)\b/gi, "an $1");
@@ -8043,7 +7928,7 @@ Return ONLY valid JSON:
         grammarScore,
         maxGrammarPoints,
         hasVerb: true,
-        isContextMatched: true,
+        isContextMatched,
         errors: uniqueErrors,
         correctedFull
       };
@@ -8302,7 +8187,7 @@ Return ONLY valid JSON:
         : `<span class="text-emerald-400 font-bold">중간 침묵 없음 (감점 0점)</span>`;
 
       const trailingNote = data.trailingSilenceIgnoredSec > 0
-        ? `<span class="text-sky-300 text-[11px]">👍 조기 답변 완료 후 남은 마지막 ${data.trailingSilenceIgnoredSec}초 공백은 감점에서 100% 제외됨 (실발화 ${data.activeSpeakingSec}초 기준 채점)</span>`
+        ? `<span class="text-sky-300 text-[11px]">조기 답변 완료 후 남은 마지막 ${data.trailingSilenceIgnoredSec}초 공백은 감점에서 100% 제외됨 (실발화 ${data.activeSpeakingSec}초 기준 채점)</span>`
         : `<span class="text-slate-400 text-[11px]">실제 발화 구간(${data.activeSpeakingSec}초) 기준 WPM 및 유창성 측정 완료</span>`;
 
       const taskNotesHtml = (data.taskFeedbackHtmlList || []).map(note => `
@@ -8311,15 +8196,29 @@ Return ONLY valid JSON:
         </div>
       `).join('');
 
+      const partQuestions = (TOS_EXAM_STRUCTURE[currentPart] && TOS_EXAM_STRUCTURE[currentPart].questions) || [];
+      const quickSubQButtonsHtml = partQuestions.length > 1
+        ? `<div class="flex items-center gap-1 mr-1">
+            ${partQuestions.map((q, idx) => `
+              <button type="button" onclick="selectQuestion(${idx})" class="px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold transition ${idx === currentQuestionIndex ? 'bg-brand-600 text-white shadow border border-brand-400/50' : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'}">
+                ${q.qId}
+              </button>
+            `).join('')}
+          </div>`
+        : '';
+
       rubricBox.innerHTML = `
         <div class="flex items-center justify-between flex-wrap gap-2 border-b border-white/10 pb-2">
           <span class="font-extrabold text-amber-300 flex items-center gap-1.5">
             <i class="fa-solid fa-sliders"></i>
-            <span>📊 200점 만점 6대 영역 정밀 채점표</span>
+            <span>200점 만점 6대 영역 정밀 채점표</span>
           </span>
-          <span class="px-2.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 font-mono font-black text-xs">
-            최종 ${data.finalScore}점 / 200점
-          </span>
+          <div class="flex items-center flex-wrap gap-1.5">
+            ${quickSubQButtonsHtml}
+            <span class="px-2.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 font-mono font-black text-xs">
+              최종 ${data.finalScore}점 / 200점
+            </span>
+          </div>
         </div>
 
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
@@ -8356,7 +8255,7 @@ Return ONLY valid JSON:
           ${trailingNote}
         </div>
 
-        ${taskNotesHtml ? `<div class="space-y-1.5 pt-1 border-t border-white/10"><div class="font-bold text-indigo-300 text-[11px]">🎯 파트별 핵심 정답 · 팩트체크 상세 해설:</div>${taskNotesHtml}</div>` : ''}
+        ${taskNotesHtml ? `<div class="space-y-1.5 pt-1 border-t border-white/10"><div class="font-bold text-indigo-300 text-[11px]">파트별 핵심 정답 · 팩트체크 상세 해설:</div>${taskNotesHtml}</div>` : ''}
       `;
     }
 
@@ -8637,12 +8536,6 @@ Return ONLY valid JSON:
     window.onload = function () {
       updateApiKeyStatusUI();
       loadPart(1);
-      // 모바일/사파리에서 화면 어디든 첫 터치 시 오디오 및 원어민 음성 합성기 잠금 즉시 해제
-      const unlockOnce = () => {
-        unlockMobileAudioAndSpeech();
-      };
-      document.addEventListener('touchstart', unlockOnce, { passive: true, once: true });
-      document.addEventListener('click', unlockOnce, { passive: true, once: true });
     };
   </script>
   <!-- 외부 scoring_engine.js 파일이 같은 폴더에 있을 때도 자연스럽게 호환되도록 연결 -->
